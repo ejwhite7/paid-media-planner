@@ -248,3 +248,9 @@ table.stages input { width: 70px; }
 .netswitch .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--c); box-shadow: 0 0 0 1px rgba(128,128,128,.45); }
 .netswitch small { opacity: .6; font-size: 10.5px; }
 #mocksView { padding-top: 56px; }
+
+/* Reviewers (clients in the portal) read, comment and set statuses: no editing tools. */
+body.readonly .edit-only, body.readonly .n-add, body.readonly .port, body.readonly .ins-actions, body.readonly .mk-rm, body.readonly [data-addcard] { display: none !important; }
+body.readonly #planName { pointer-events: none; }
+.ask-state.failed { background: color-mix(in srgb, var(--error) 10%, var(--bg)); border: 1px solid var(--error); }
+#emptyHint button { margin-top: 10px; pointer-events: auto; }

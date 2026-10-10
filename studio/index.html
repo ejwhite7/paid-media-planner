@@ -14,7 +14,7 @@
 		<button id="toggleLeft" class="icon-btn" title="Hide the left panel ( [ )" aria-pressed="true">◧</button>
 		<div class="logo"><span class="wordmark">GrowthCast</span><span class="product">Paid Media Campaign Planner</span></div>
 		<select id="planSel" title="Open a plan"></select>
-		<button id="newPlan" title="New plan">New</button>
+		<button id="newPlan" title="New plan" class="edit-only">New</button>
 		<input id="planName" aria-label="Plan name">
 		<select id="planStatus" title="Plan status">
 			<option value="draft">Draft</option><option value="in_review">In review</option><option value="changes_requested">Changes requested</option><option value="approved">Approved</option><option value="live">Live</option>
@@ -22,12 +22,13 @@
 		<nav class="views"><button data-view="canvas" class="on">Canvas</button><button data-view="mocks">Mocks</button><button data-view="brief">Brief</button></nav>
 		<span class="grow"></span>
 		<span id="saveState" class="muted small"></span>
-		<button id="settingsBtn" title="Naming, test budget, funnel weighting, positioning files">Settings</button>
+		<button id="settingsBtn" class="edit-only" title="Naming, test budget, funnel weighting, positioning files">Settings</button>
 		<button id="shareBtn" class="primary">Share</button>
 		<button id="toggleRight" class="icon-btn" title="Hide the inspector ( ] )" aria-pressed="true">◨</button>
 	</header>
 	<main>
 		<aside class="left">
+			<div class="edit-only">
 			<h4>Drag onto the canvas</h4>
 			<div class="tile t-campaign" draggable="true" data-drag="type:campaign"><b>Campaign</b><span>Objective, networks, budget</span></div>
 			<div class="tile t-adset" draggable="true" data-drag="type:adset"><b>Ad set</b><span>Audience and targeting</span></div>
@@ -45,6 +46,7 @@
 				<button data-ask="creative" title="Claude reads your positioning files and makes the produced creative. UGC ads keep their placeholders.">Design creative</button>
 			</div>
 			<div id="askState" class="ask-state" hidden></div>
+			</div>
 
 			<h4>Checks & feedback</h4>
 			<div id="checks"></div>
@@ -54,7 +56,7 @@
 			<div id="canvasView">
 				<div id="world"><svg id="edges" width="1" height="1"></svg><div id="nodes"></div></div>
 				<div id="emptyHint" hidden><b>Start your plan</b><span>Drag a Campaign in from the left, or describe one under Ask Claude and press Build from prompt.</span></div>
-				<div class="zoomctl"><button id="zoomOut" title="Zoom out (−)">−</button><span id="zoomLbl">100%</span><button id="zoomIn" title="Zoom in (+)">+</button><button id="zoomFit" title="Fit (F)">Fit</button><button id="tidy" title="Lay out the tree">Tidy</button></div>
+				<div class="zoomctl"><button id="zoomOut" title="Zoom out (−)">−</button><span id="zoomLbl">100%</span><button id="zoomIn" title="Zoom in (+)">+</button><button id="zoomFit" title="Fit (F)">Fit</button><button id="tidy" class="edit-only" title="Lay out the tree">Tidy</button></div>
 			</div>
 			<div id="mocksView" hidden></div>
 			<div id="briefView" hidden></div>
@@ -64,10 +66,6 @@
 	<dialog id="shareDlg"></dialog>
 	<dialog id="settingsDlg" class="wide"></dialog>
 	<div id="toast" role="status"></div>
-	<script type="module">
-		import { PLATFORMS } from "./model.mjs";
-		document.getElementById("netPalette").innerHTML = Object.entries(PLATFORMS).map(([k, p]) => `<span class="net" draggable="true" data-drag="net:${k}" style="--c:${p.color}">${p.short}</span>`).join("");
-	</script>
 	<script type="module" src="app.js"></script>
 </body>
 </html>

@@ -7,6 +7,9 @@ execution.
 Campaign (objective) → Ad set (audience and targeting) → Ad (creative), across Meta, Google, TikTok, LinkedIn, Reddit, X,
 Pinterest and Snapchat.
 
+GrowthCast clients also get this planner hosted in the GrowthCast client portal, where the team builds plans and
+clients review, comment and approve them. Both run the same canvas code from this repository.
+
 ## Install
 
 ```text

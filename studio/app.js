@@ -27,7 +27,13 @@ const store = {
 	},
 };
 const S = { plans: [], plan: null, version: null, sel: null, selEdge: null, tab: store.get("cc-tab", {}), view: "canvas", z: 1, px: 40, py: 20, saving: false, dirty: false, undo: [], redo: [], request: null, allFormats: false, lastKey: null, lastAt: 0 };
-const me = () => store.get("cc-name", "") || "Me";
+// Web mode is the hosted planner inside the GrowthCast client portal. env.js sets window.PLANNER_ENV and fills in the
+// signed-in person, their role and their projects once the portal hands over a token. Staff edit; clients review:
+// they comment and set statuses, and the server enforces the same. The Claude Code plugin leaves it unset.
+const ENV = window.PLANNER_ENV ?? { mode: "local" };
+const WEB = ENV.mode === "web";
+let READONLY = false;
+const me = () => (WEB ? ENV.user?.name || ENV.user?.email || "Me" : store.get("cc-name", "") || "Me");
 // The network canvas on show ("" = all networks). Each network keeps its own node positions in node.views[network].
 S.net = "";
 const pos = (n) => (S.net ? n.views?.[S.net] ?? n : n);
@@ -49,6 +55,7 @@ function layoutNet(plan, net, all) {
 	return placed;
 }
 const cv = $("#canvasView");
+$("#netPalette").innerHTML = Object.entries(PLATFORMS).map(([k, p]) => `<span class="net" draggable="true" data-drag="net:${k}" style="--c:${p.color}">${p.short}</span>`).join("");
 
 // ---------- server ----------
 async function api(path, opts = {}) {
@@ -61,7 +68,7 @@ const post = (path, data, method = "POST") => api(path, { method, headers: { "co
 
 async function refreshPlanList() {
 	S.plans = (await api("/api/plans")).body;
-	$("#planSel").innerHTML = S.plans.map((p) => `<option value="${p.id}">${esc(p.name)}</option>`).join("");
+	$("#planSel").innerHTML = S.plans.map((p) => `<option value="${p.id}">${esc(p.projectName ? `${p.projectName} · ${p.name}` : p.name)}</option>`).join("");
 	if (S.plan) $("#planSel").value = S.plan.id;
 }
 async function openPlan(id) {
@@ -120,8 +127,8 @@ function adopt(b) {
 	if (S.sel && !nodeById(S.plan, S.sel)) S.sel = null;
 	renderAll();
 }
-async function poll() {
-	if (!S.plan || S.saving || S.dirty || document.hidden) return;
+async function poll(force = false) {
+	if (!S.plan || S.saving || S.dirty || (document.hidden && force !== true)) return;
 	try {
 		const { body } = await api(`/api/plans/${S.plan.id}/version`);
 		if (body.version && body.version !== S.version) {
@@ -134,8 +141,9 @@ async function poll() {
 }
 async function pollRequest() {
 	try {
-		const { body } = await api("/api/request");
-		S.request = body && body.planId === S.plan?.id && Date.now() - body.at < 12 * 3600e3 ? body : null;
+		const { body } = await api(WEB ? `/api/request?planId=${encodeURIComponent(S.plan?.id ?? "")}` : "/api/request");
+		if (WEB && S.asking) return;
+		S.request = body && body.planId === S.plan?.id && (WEB || Date.now() - body.at < 12 * 3600e3) ? body : null;
 	} catch {
 		S.request = null;
 	}
@@ -240,7 +248,7 @@ function ensureCards(ad, i) {
 // ---------- rendering ----------
 function renderAll() {
 	if (S.net && !S.plan.nodes.some((n) => n.type === "campaign" && n.data.platforms.includes(S.net))) S.net = "";
-	if (S.net && layoutNet(S.plan, S.net, !visible().some((n) => n.views?.[S.net]))) scheduleSave();
+	if (S.net && layoutNet(S.plan, S.net, !visible().some((n) => n.views?.[S.net])) && !READONLY) scheduleSave();
 	renderNetSwitch();
 	renderNodes();
 	renderEdges();
@@ -351,6 +359,18 @@ const ASK = { generate: "Build from prompt", review: "Review plan", improve: "Im
 function renderAsk() {
 	const r = S.request;
 	const el = $("#askState");
+	if (WEB) {
+		if (!r || (r.status !== "running" && Date.now() - Date.parse(r.finishedAt ?? 0) > 30 * 60e3)) return (el.hidden = true);
+		el.hidden = false;
+		el.className = r.status === "failed" ? "ask-state failed" : r.status === "running" ? "ask-state queued" : "ask-state got";
+		el.innerHTML =
+			r.status === "running"
+				? `<b>✦ Claude is working on “${ASK[r.kind]}”.</b> This can take a couple of minutes. Changes appear here when it's done.`
+				: r.status === "failed"
+					? `<b>“${ASK[r.kind]}” didn't finish.</b> ${esc(r.error ?? "")} <button data-ask-clear>Dismiss</button>`
+					: `<b>✦ ${ASK[r.kind]} done.</b> ${esc(r.summary ?? "")} <button data-ask-clear>Dismiss</button>`;
+		return;
+	}
 	if (!r || (r.deliveredAt && Date.now() - r.deliveredAt > 30 * 60e3)) return (el.hidden = true);
 	el.hidden = false;
 	el.className = r.deliveredAt ? "ask-state got" : "ask-state queued";
@@ -365,6 +385,23 @@ async function ask(kind) {
 	if (kind === "creative" && !S.plan.settings.context.length && !confirm("No positioning files are attached (Settings). Design creative from the brief alone?")) return;
 	const nodeIds = S.sel && kind !== "generate" && kind !== "review" ? subtree(S.plan, S.sel) : [];
 	if (S.dirty) await save();
+	if (WEB) {
+		// The hosted planner runs the request now and answers when it's done; the canvas then adopts the saved plan.
+		if (S.asking) return toast("Claude is still working on the last request.");
+		S.asking = true;
+		S.request = { kind, status: "running", planId: S.plan.id };
+		renderAsk();
+		try {
+			S.request = (await post("/api/request", { kind, planId: S.plan.id, note, nodeIds })).body;
+			if (S.request.status === "done") $("#askNote").value = "";
+		} catch (e) {
+			S.request = { kind, status: "failed", error: e.message, finishedAt: new Date().toISOString() };
+		} finally {
+			S.asking = false;
+		}
+		renderAsk();
+		return poll(true);
+	}
 	try {
 		await post("/api/request", { kind, planId: S.plan.id, note, nodeIds });
 		await pollRequest();
@@ -382,6 +419,11 @@ const listInp = (bind, v, ph = "") => `<input data-bind="${bind}" data-kind="lis
 const cnt = (v, max) => (max ? `<span class="cnt${(v ?? "").length > max ? " over" : ""}" data-max="${max}">${(v ?? "").length}/${max}</span>` : "");
 
 function renderInspector() {
+	renderInspectorHtml();
+	// Reviewers read everything and can only comment and set statuses.
+	if (READONLY) for (const el of $$("#inspector input, #inspector textarea, #inspector select, #inspector button")) if (!el.matches("[data-tab], [data-comment], #commentText, [data-bind='status'], [data-resolve]")) el.disabled = true;
+}
+function renderInspectorHtml() {
 	const el = $("#inspector");
 	const n = S.sel && nodeById(S.plan, S.sel);
 	if (!n) return (el.innerHTML = planInspector());
@@ -511,7 +553,7 @@ function reviewTab(n, items) {
 function mockHost(n, platform, format, primary) {
 	return `<figure class="mockhost${primary ? "" : " alt"}" data-ad="${n.id}" data-platform="${platform}" data-format="${format}">
 		<figcaption><b>${esc(n.data.name)}</b><span>${esc(formatLabel(platform, format))}</span>${primary ? "" : `<button data-use="${platform}:${format}">Use</button>`}</figcaption>
-		${renderMock(n.data, S.plan.brand, { editable: true, platform, format })}</figure>`;
+		${renderMock(n.data, S.plan.brand, { editable: !READONLY, platform, format })}</figure>`;
 }
 
 // ---------- mocks & brief views ----------
@@ -602,6 +644,7 @@ cv.addEventListener("pointerdown", (e) => {
 });
 function startNodeDrag(e, id) {
 	if (S.sel !== id) select(id);
+	if (READONLY) return;
 	const ids = e.shiftKey ? subtree(S.plan, id).filter((i) => inView(S.plan, nodeById(S.plan, i), S.net)) : [id];
 	const orig = ids.map((i) => [nodeById(S.plan, i), pos(nodeById(S.plan, i)).x, pos(nodeById(S.plan, i)).y]);
 	const before = JSON.stringify(S.plan);
@@ -623,6 +666,7 @@ function startNodeDrag(e, id) {
 	);
 }
 function startConnect(e, port, id) {
+	if (READONLY) return;
 	const src = nodeById(S.plan, id);
 	const out = port.classList.contains("out");
 	const want = out ? TYPES[src.type].child : TYPES[src.type].parent;
@@ -693,6 +737,7 @@ cv.addEventListener("dragover", (e) => {
 cv.addEventListener("dragleave", (e) => !cv.contains(e.relatedTarget) && $$(".node.drop-hover").forEach((el) => el.classList.remove("drop-hover")));
 cv.addEventListener("drop", async (e) => {
 	e.preventDefault();
+	if (READONLY) return;
 	$$(".node.drop-hover").forEach((el) => el.classList.remove("drop-hover"));
 	const t = e.target.closest(".node") && nodeById(S.plan, e.target.closest(".node").dataset.id);
 	const w = toWorld(e.clientX, e.clientY);
@@ -863,6 +908,7 @@ document.addEventListener("click", async (e) => {
 	}
 	if ((el = b("[data-ask]"))) return ask(el.dataset.ask);
 	if (b("[data-ask-clear]")) {
+		if (WEB) return (S.request = null), renderAsk();
 		await api("/api/request", { method: "DELETE" });
 		return pollRequest();
 	}
@@ -954,6 +1000,7 @@ addEventListener("keydown", (e) => {
 	if (e.target.closest?.("input, textarea, select, [contenteditable], dialog")) return;
 	const mod = e.metaKey || e.ctrlKey;
 	if (mod && e.key.toLowerCase() === "z") return e.preventDefault(), undo(e.shiftKey);
+	if (READONLY && (mod || e.key === "Delete" || e.key === "Backspace")) return;
 	if (mod && e.key.toLowerCase() === "d" && S.sel) return e.preventDefault(), duplicate(S.sel);
 	if (e.key === "[") return setPanels(!panels().left, panels().right);
 	if (e.key === "]") return setPanels(panels().left, !panels().right);
@@ -1016,11 +1063,28 @@ $("#tidy").onclick = () => {
 	fit();
 };
 $("#newPlan").onclick = () => {
+	if (WEB) return newPlanDialog();
 	const name = prompt("Name the new plan:", "Untitled plan");
 	if (name != null) newPlanFlow(name);
 };
-async function newPlanFlow(name) {
-	const { body } = await post("/api/plans", { name: name || "Untitled plan" });
+// The hosted planner files every plan under a portal project, which decides which clients can review it.
+function newPlanDialog() {
+	const d = $("#shareDlg");
+	if (!ENV.projects?.length) return toast("Create a project in the portal first: every plan belongs to one.");
+	d.innerHTML = `<form method="dialog"><h3>New campaign plan</h3>
+		<label class="f"><span class="fl">Name</span><input id="npName" value="Untitled plan" required></label>
+		<label class="f"><span class="fl">Project</span><select id="npProject">${ENV.projects.map((p) => `<option value="${esc(p.id)}">${esc(p.name)}</option>`).join("")}</select></label>
+		<p class="muted small">Clients assigned to the project can review the plan, comment and approve.</p>
+		<div class="btn-row end"><button value="cancel">Cancel</button><button value="ok" class="primary">Create</button></div></form>`;
+	d.showModal();
+	$("#npName", d).select();
+	d.onclose = () => {
+		d.onclose = null;
+		if (d.returnValue === "ok") newPlanFlow($("#npName", d).value.trim(), $("#npProject", d).value);
+	};
+}
+async function newPlanFlow(name, projectId) {
+	const { body } = await post("/api/plans", { name: name || "Untitled plan", projectId });
 	await refreshPlanList();
 	await openPlan(body.plan.id);
 }
@@ -1040,15 +1104,20 @@ function openShare() {
 			<div><b>Hand-off pack</b><span class="muted small">One HTML file with review and build checklist: open, email, or drop in a drive.</span><a data-href="export.html" target="_blank">Preview</a><a data-href="export.html" data-q="download">Download</a></div>
 			<div><b>Build sheet</b><span class="muted small">CSV, one row per ad, for the person building it.</span><a data-href="export.csv">Download CSV</a></div>
 			<div><b>Brief as Markdown</b><span class="muted small">For Slack, email or a doc.</span><button type="button" data-copy-md>Copy</button></div>
-			<div><b>Private link</b><span class="muted small">Claude publishes the pack to claude.ai and gives you a link to send.</span><button type="button" data-ask="share">Ask Claude</button></div>
+			${WEB ? `<div><b>Portal link</b><span class="muted small">Opens this plan in the client portal, for staff and for the clients assigned to its project.</span><button type="button" data-copy-link="client">Copy client link</button><button type="button" data-copy-link="staff">Copy staff link</button></div>` : `<div><b>Private link</b><span class="muted small">Claude publishes the pack to claude.ai and gives you a link to send.</span><button type="button" data-ask="share">Ask Claude</button></div>`}
 		</div>
-		<label class="f"><span class="fl">Your name on comments</span><input id="meName" value="${esc(store.get("cc-name", ""))}" placeholder="e.g. Sam"></label>
+		${WEB ? "" : `<label class="f"><span class="fl">Your name on comments</span><input id="meName" value="${esc(store.get("cc-name", ""))}" placeholder="e.g. Sam"></label>`}
 		<div class="btn-row end"><button value="close">Done</button></div></form>`;
 	const links = () => $$("[data-href]", d).forEach((a) => (a.href = `/api/plans/${id}/${a.dataset.href}${q(a.dataset.q ?? "")}`));
 	links();
 	d.showModal();
 	$("#shareNet", d)?.addEventListener("change", (e) => ((net = e.target.value), links()));
-	$("#meName", d).oninput = (e) => store.set("cc-name", e.target.value.trim());
+	$("#meName", d)?.addEventListener("input", (e) => store.set("cc-name", e.target.value.trim()));
+	for (const b of $$("[data-copy-link]", d))
+		b.onclick = () => {
+			const url = `${ENV.portalOrigin}${b.dataset.copyLink === "client" ? "/portal/campaign-planner" : "/dashboard/campaign-planner"}?plan=${encodeURIComponent(id)}`;
+			navigator.clipboard.writeText(url).then(() => toast("Link copied."), () => toast(url));
+		};
 	$("[data-copy-md]", d).onclick = async () => {
 		const md = (await api(`/api/plans/${id}/export.md${q()}`)).body;
 		await navigator.clipboard.writeText(md).then(() => toast("Brief copied as Markdown."), () => toast("Couldn't reach the clipboard."));
@@ -1061,7 +1130,7 @@ function openShare() {
 			const r = await fetch(`/api/plans/${id}/slides.pdf${q()}`);
 			if (!r.ok) {
 				toast(((await r.json().catch(() => null))?.error ?? "Couldn't make the PDF.") + " Opening the slides to print instead.");
-				open(`/api/plans/${id}/slides.html${q("print")}`, "_blank");
+				openAuthed(`/api/plans/${id}/slides.html${q("print")}`, true);
 				return;
 			}
 			const a = Object.assign(document.createElement("a"), { href: URL.createObjectURL(await r.blob()), download: (r.headers.get("content-disposition") ?? "").match(/filename="(.+)"/)?.[1] ?? "slides.pdf" });
@@ -1072,7 +1141,7 @@ function openShare() {
 			btn.textContent = "Download PDF";
 		}
 	};
-	$("[data-ask='share']", d).addEventListener("click", () => d.close());
+	$("[data-ask='share']", d)?.addEventListener("click", () => d.close());
 }
 $("#shareBtn").onclick = openShare;
 
@@ -1161,6 +1230,34 @@ $("#settingsDlg").addEventListener("click", async (e) => {
 	}
 });
 $("#settingsBtn").onclick = openSettings;
+// In the portal, files come from the API with the session token, so links become fetched blobs.
+async function openAuthed(url, newTab = false, filename = "") {
+	const w = newTab ? open("", "_blank") : null;
+	try {
+		// Pages (the hand-off pack, the slides) open from a short-lived signed link so their own scripts run.
+		if (w && /\/(export|slides)\.html/.test(url)) {
+			const { body } = await api(`/api/link?u=${encodeURIComponent(url)}`);
+			w.location = new URL(body.url, location.href).href;
+			return;
+		}
+		const r = await fetch(url);
+		if (!r.ok) throw new Error((await r.json().catch(() => null))?.error ?? `Download failed (${r.status})`);
+		const href = URL.createObjectURL(await r.blob());
+		if (w) w.location = href;
+		else Object.assign(document.createElement("a"), { href, download: filename || (r.headers.get("content-disposition") ?? "").match(/filename="(.+)"/)?.[1] || "download" }).click();
+		setTimeout(() => URL.revokeObjectURL(href), 60e3);
+	} catch (e) {
+		w?.close();
+		toast(e.message);
+	}
+}
+if (WEB)
+	document.addEventListener("click", (e) => {
+		const a = e.target.closest?.("a[data-href], .ctx-list a");
+		if (!a) return;
+		e.preventDefault();
+		openAuthed(a.getAttribute("href"), a.target === "_blank");
+	});
 addEventListener("hashchange", () => {
 	const id = location.hash.slice(1);
 	if (id && id !== S.plan?.id) openPlan(id).catch(() => toast("No such plan."));
@@ -1169,10 +1266,24 @@ addEventListener("resize", () => S.view === "canvas" && applyView());
 
 // ---------- boot ----------
 (async () => {
+	if (WEB) {
+		await ENV.ready;
+		READONLY = ENV.role !== "staff";
+		document.body.classList.toggle("readonly", READONLY);
+		document.body.classList.add("web");
+	}
 	await refreshPlanList();
-	let id = location.hash.slice(1) || store.get("cc-last", null);
+	let id = (WEB && ENV.planId) || location.hash.slice(1) || store.get("cc-last", null);
 	if (!S.plans.some((p) => p.id === id)) id = S.plans[0]?.id;
-	setInterval(poll, 1500);
+	setInterval(poll, WEB ? 5000 : 1500);
+	if (!id && WEB) return showNoPlans();
 	if (!id) return newPlanFlow("My first plan");
 	await openPlan(id);
 })();
+function showNoPlans() {
+	$("#emptyHint").hidden = false;
+	$("#emptyHint").innerHTML = READONLY
+		? "<b>No campaign plans yet</b><span>When GrowthCast shares a plan for one of your projects, it appears here for review.</span>"
+		: '<b>No campaign plans yet</b><span>Create the first one for a project.</span><button class="primary" id="firstPlan">New plan</button>';
+	$("#firstPlan")?.addEventListener("click", newPlanDialog);
+}
