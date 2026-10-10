@@ -36,3 +36,13 @@ test("cli: new, context, attach, name", () => {
 		rmSync(home, { recursive: true, force: true });
 	}
 });
+
+test("workbook is a valid zip with one sheet per section", async () => {
+	const { workbook } = await import("../tools/xlsx.mjs");
+	const { workbookSheets } = await import("../studio/brief.mjs");
+	const { newPlan, normalize } = await import("../studio/model.mjs");
+	const buf = workbook(workbookSheets(normalize(newPlan("Book")).plan));
+	assert.equal(buf.readUInt32LE(0), 0x04034b50, "zip local header");
+	assert.equal(buf.readUInt32LE(buf.length - 22), 0x06054b50, "zip end record");
+	assert.equal(buf.readUInt16LE(buf.length - 12), 10, "content types, rels, workbook, rels, styles + 5 sheets");
+});

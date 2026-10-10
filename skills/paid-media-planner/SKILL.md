@@ -9,7 +9,8 @@ The canvas (`tools/canvas.mjs`, http://127.0.0.1:4720) edits **plans**: JSON fil
 You work on a plan by editing that file. The open canvas polls it and reloads within two seconds, so the user watches
 your changes land. Always:
 
-- Keep the `id`, `x` and `y` of nodes you don't mean to change, and never drop fields you don't understand.
+- Keep the `id`, `x`, `y` and `views` (each network canvas's own positions) of nodes you don't mean to change, and never
+  drop fields you don't understand. New nodes need no `views`: the canvas places them.
 - After editing, run `node <tools>/canvas.mjs validate <id>`. Fix every entry in `errors`. `checks` are the canvas's own
   lint: clear the ones your change was meant to clear.
 - After adding nodes, run `node <tools>/canvas.mjs layout <id>` to tidy the tree.

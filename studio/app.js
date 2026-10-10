@@ -2,6 +2,7 @@
 // save, redraw). The server file is the source of truth: when its version changes underneath (Claude edited it), the
 // canvas adopts it. Node graph: campaign → ad set → ad, parent links drawn as edges from out-ports to in-ports.
 import { PLATFORMS, OBJECTIVES, TYPES, STATUSES, STATUS_LABEL, FIELD_LABEL, newNode, nodeById, childrenOf, campaignOf, subtree, issuesByNode, adsetSummary, money, layoutPlan, firstFormat, uid } from "./model.mjs";
+import { inView, planNetworks } from "./model.mjs";
 import { FUNNEL, FUNNEL_LABEL, NAME_TOKENS, applyNaming, budgetPlan, conventionName, labelOf, normalizeSettings, suggestedBudget } from "./model.mjs";
 import { renderMock, esc, formatLabel } from "./mocks.mjs";
 import { renderBrief } from "./brief.mjs";
@@ -27,6 +28,26 @@ const store = {
 };
 const S = { plans: [], plan: null, version: null, sel: null, selEdge: null, tab: store.get("cc-tab", {}), view: "canvas", z: 1, px: 40, py: 20, saving: false, dirty: false, undo: [], redo: [], request: null, allFormats: false, lastKey: null, lastAt: 0 };
 const me = () => store.get("cc-name", "") || "Me";
+// The network canvas on show ("" = all networks). Each network keeps its own node positions in node.views[network].
+S.net = "";
+const pos = (n) => (S.net ? n.views?.[S.net] ?? n : n);
+function setPos(n, x, y) {
+	if (S.net) (n.views ??= {})[S.net] = { x, y };
+	else Object.assign(n, { x, y });
+}
+const visible = () => S.plan.nodes.filter((n) => inView(S.plan, n, S.net));
+// Lays out a network's canvas: the tidy tree of what runs there. all = false places only nodes it hasn't placed yet.
+function layoutNet(plan, net, all) {
+	const shown = plan.nodes.filter((n) => inView(plan, n, net));
+	const clones = shown.map((n) => ({ id: n.id, type: n.type, parent: shown.some((m) => m.id === n.parent) ? n.parent : null, x: 0, y: 0 }));
+	layoutPlan({ nodes: clones });
+	let placed = 0;
+	for (const c of clones) {
+		const n = nodeById(plan, c.id);
+		if (all || !n.views?.[net]) ((n.views ??= {})[net] = { x: c.x, y: c.y }), placed++;
+	}
+	return placed;
+}
 const cv = $("#canvasView");
 
 // ---------- server ----------
@@ -48,6 +69,7 @@ async function openPlan(id) {
 	S.plan = body.plan;
 	S.version = body.version;
 	S.sel = S.selEdge = null;
+	S.net = store.get(`cc-net-${id}`, "");
 	S.undo = [];
 	S.redo = [];
 	if (location.hash.slice(1) !== id) history.replaceState(null, "", `#${id}`);
@@ -168,7 +190,9 @@ function conform(plan, ad) {
 }
 function addNode(type, { x, y, parent = null, data = {} } = {}) {
 	const p = parent && nodeById(S.plan, parent);
-	const n = newNode(type, { x, y, parent, platform: p ? platformFor(p) : data.platforms?.[0] ?? "meta", data: { name: `${TYPES[type].label} ${count(type) + 1}`, ...data } });
+	if (S.net && type === "campaign" && !data.platforms) data = { ...data, platforms: [S.net] };
+	const n = newNode(type, { x, y, parent, platform: S.net || (p ? platformFor(p) : data.platforms?.[0] ?? "meta"), data: { name: `${TYPES[type].label} ${count(type) + 1}`, ...data } });
+	if (S.net) n.views = { [S.net]: { x, y } };
 	mutate((plan) => plan.nodes.push(n));
 	select(n.id);
 	return n;
@@ -176,8 +200,8 @@ function addNode(type, { x, y, parent = null, data = {} } = {}) {
 function addChild(pid, data = {}) {
 	const p = nodeById(S.plan, pid);
 	const type = TYPES[p.type].child;
-	const kids = childrenOf(S.plan, pid);
-	return addNode(type, { x: p.x + 380, y: kids.length ? Math.max(...kids.map((k) => k.y)) + 170 : p.y, parent: pid, data });
+	const kids = childrenOf(S.plan, pid).filter((k) => inView(S.plan, k, S.net));
+	return addNode(type, { x: pos(p).x + 380, y: kids.length ? Math.max(...kids.map((k) => pos(k).y)) + 170 : pos(p).y, parent: pid, data });
 }
 function removeNode(id) {
 	const ids = subtree(S.plan, id);
@@ -192,11 +216,12 @@ function removeNode(id) {
 function duplicate(id) {
 	const ids = subtree(S.plan, id);
 	const map = Object.fromEntries(ids.map((i) => [i, uid(nodeById(S.plan, i).type === "adset" ? "as" : nodeById(S.plan, i).type === "ad" ? "ad" : "cp")]));
-	const dy = Math.max(...ids.map((i) => nodeById(S.plan, i).y)) - Math.min(...ids.map((i) => nodeById(S.plan, i).y)) + 190;
+	const dy = Math.max(...ids.map((i) => pos(nodeById(S.plan, i)).y)) - Math.min(...ids.map((i) => pos(nodeById(S.plan, i)).y)) + 190;
 	mutate((plan) => {
 		for (const i of ids) {
 			const n = structuredClone(nodeById(plan, i));
-			plan.nodes.push({ ...n, id: map[i], parent: map[n.parent] ?? n.parent, y: n.y + dy, status: "draft", comments: [], data: { ...n.data, name: i === id ? `${n.data.name} copy` : n.data.name } });
+			const views = Object.fromEntries(Object.entries(n.views ?? {}).map(([k, v]) => [k, { x: v.x, y: v.y + dy }]));
+			plan.nodes.push({ ...n, id: map[i], parent: map[n.parent] ?? n.parent, y: n.y + dy, views, status: "draft", comments: [], data: { ...n.data, name: i === id ? `${n.data.name} copy` : n.data.name } });
 		}
 	});
 	select(map[id]);
@@ -214,6 +239,9 @@ function ensureCards(ad, i) {
 
 // ---------- rendering ----------
 function renderAll() {
+	if (S.net && !S.plan.nodes.some((n) => n.type === "campaign" && n.data.platforms.includes(S.net))) S.net = "";
+	if (S.net && layoutNet(S.plan, S.net, !visible().some((n) => n.views?.[S.net]))) scheduleSave();
+	renderNetSwitch();
 	renderNodes();
 	renderEdges();
 	renderInspector();
@@ -253,7 +281,7 @@ function nodeHtml(n, issues) {
 		body = `<div class="n-line"><span class="k">Objective</span> ${OBJECTIVES[d.objective] ?? d.objective}</div><div class="n-nets">${d.platforms.map((p) => `<span class="net" style="--c:${PLATFORMS[p].color}">${PLATFORMS[p].short}</span>`).join("") || '<span class="muted">No networks</span>'}</div><div class="n-line muted">${money(d.budget)}</div>`;
 	if (n.type === "adset") body = `<div class="n-line">${esc(adsetSummary(d))}</div>${d.interests.length ? `<div class="n-tags">${d.interests.slice(0, 3).map((i) => `<span>${esc(i)}</span>`).join("")}${d.interests.length > 3 ? `<span>+${d.interests.length - 3}</span>` : ""}</div>` : ""}`;
 	if (n.type === "ad") body = `<div class="n-ad"><div class="n-thumb">${thumb(n)}</div><div class="n-adtext"><div class="n-hl">${esc(d.headline || "—")}</div><div class="n-line muted"><span class="net" style="--c:${PLATFORMS[d.platform]?.color}">${PLATFORMS[d.platform]?.short ?? d.platform}</span> ${esc(PLATFORMS[d.platform]?.formats[d.format]?.name ?? "")}${d.creative === "ugc" ? '<span class="n-ugc">UGC</span>' : ""}</div></div></div>`;
-	return `<div class="node t-${n.type}${S.sel === n.id ? " sel" : ""}" data-id="${n.id}" style="transform:translate(${n.x}px,${n.y}px)">
+	return `<div class="node t-${n.type}${S.sel === n.id ? " sel" : ""}" data-id="${n.id}" style="transform:translate(${pos(n).x}px,${pos(n).y}px)">
 	<div class="n-head"><span class="n-type">${t.label} <i>· ${t.sub}</i></span><span class="n-badges">${badges(issues)}</span></div>
 	<div class="n-body"><div class="n-name">${esc(d.name)}</div>${body}</div>
 	<div class="n-foot"><span class="st st-${n.status}">${STATUS_LABEL[n.status]}</span>${n.assignee ? `<span class="who" title="Assignee">@${esc(n.assignee)}</span>` : ""}${n.comments.length ? `<span class="muted">💬 ${n.comments.length}</span>` : ""}</div>
@@ -263,8 +291,9 @@ function nodeHtml(n, issues) {
 }
 function renderNodes() {
 	const issues = issuesByNode(S.plan);
-	$("#nodes").innerHTML = S.plan.nodes.map((n) => nodeHtml(n, issues[n.id])).join("");
-	$("#emptyHint").hidden = S.plan.nodes.length > 0;
+	const shown = visible();
+	$("#nodes").innerHTML = shown.map((n) => nodeHtml(n, issues[n.id])).join("");
+	$("#emptyHint").hidden = shown.length > 0;
 }
 const COLORS = { campaign: "var(--c-campaign)", adset: "var(--c-adset)" };
 function curve(x1, y1, x2, y2) {
@@ -273,10 +302,10 @@ function curve(x1, y1, x2, y2) {
 }
 function renderEdges() {
 	let h = "";
-	for (const n of S.plan.nodes) {
+	for (const n of visible()) {
 		const p = n.parent && nodeById(S.plan, n.parent);
-		if (!p) continue;
-		const d = curve(p.x + W, p.y + PORT_Y, n.x, n.y + PORT_Y);
+		if (!p || !inView(S.plan, p, S.net)) continue;
+		const d = curve(pos(p).x + W, pos(p).y + PORT_Y, pos(n).x, pos(n).y + PORT_Y);
 		h += `<path class="edge${S.selEdge === n.id ? " sel" : ""}" d="${d}" style="stroke:${COLORS[p.type]}"/><path class="edge-hit" data-child="${n.id}" d="${d}"/>`;
 	}
 	$("#edges").innerHTML = h + `<path id="tempEdge" class="edge temp" d=""/>`;
@@ -288,9 +317,10 @@ function applyView() {
 	$("#zoomLbl").textContent = `${Math.round(S.z * 100)}%`;
 }
 function fit() {
-	if (!S.plan.nodes.length) return (S.z = 1), (S.px = 40), (S.py = 20), applyView();
+	const shown = visible();
+	if (!shown.length) return (S.z = 1), (S.px = 40), (S.py = 20), applyView();
 	const r = cv.getBoundingClientRect();
-	const xs = S.plan.nodes.map((n) => n.x), ys = S.plan.nodes.map((n) => n.y);
+	const xs = shown.map((n) => pos(n).x), ys = shown.map((n) => pos(n).y);
 	const x0 = Math.min(...xs), x1 = Math.max(...xs) + W, y0 = Math.min(...ys), y1 = Math.max(...ys) + 160;
 	S.z = Math.max(0.25, Math.min(1.1, (r.width - 80) / (x1 - x0), (r.height - 80) / (y1 - y0)));
 	S.px = (r.width - (x1 - x0) * S.z) / 2 - x0 * S.z;
@@ -486,14 +516,14 @@ function mockHost(n, platform, format, primary) {
 
 // ---------- mocks & brief views ----------
 function renderMocks() {
-	const ads = S.plan.nodes.filter((n) => n.type === "ad");
+	const ads = visible().filter((n) => n.type === "ad");
 	const host = (ad) => (S.allFormats ? fmtChoices(ad).map((c) => mockHost(ad, c.p, c.k, c.p === ad.data.platform && c.k === ad.data.format)).join("") : mockHost(ad, ad.data.platform, ad.data.format, true));
 	let h = `<div class="mv-bar"><label><input type="checkbox" id="allFmt"${S.allFormats ? " checked" : ""}> Preview each ad in every format its campaign runs</label><span class="muted">Click text to rewrite it. Drop images or video on a block.</span></div>`;
 	if (!ads.length) h += `<p class="muted pad">No ads yet. Add one on the canvas.</p>`;
-	for (const c of S.plan.nodes.filter((n) => n.type === "campaign")) {
+	for (const c of visible().filter((n) => n.type === "campaign")) {
 		h += `<section class="mv-camp"><h2><span class="lvl lvl-campaign">Campaign</span> ${esc(c.data.name)}</h2>`;
 		for (const s of childrenOf(S.plan, c.id)) {
-			const kids = childrenOf(S.plan, s.id);
+			const kids = childrenOf(S.plan, s.id).filter((a) => inView(S.plan, a, S.net));
 			h += `<h3><span class="lvl lvl-adset">Ad set</span> ${esc(s.data.name)} <small class="muted">${esc(adsetSummary(s.data))}</small></h3><div class="mv-grid">${kids.map(host).join("") || '<p class="muted">No ads.</p>'}</div>`;
 		}
 		h += `</section>`;
@@ -572,17 +602,16 @@ cv.addEventListener("pointerdown", (e) => {
 });
 function startNodeDrag(e, id) {
 	if (S.sel !== id) select(id);
-	const ids = e.shiftKey ? subtree(S.plan, id) : [id];
-	const orig = ids.map((i) => [nodeById(S.plan, i), nodeById(S.plan, i).x, nodeById(S.plan, i).y]);
+	const ids = e.shiftKey ? subtree(S.plan, id).filter((i) => inView(S.plan, nodeById(S.plan, i), S.net)) : [id];
+	const orig = ids.map((i) => [nodeById(S.plan, i), pos(nodeById(S.plan, i)).x, pos(nodeById(S.plan, i)).y]);
 	const before = JSON.stringify(S.plan);
 	drag(
 		e,
 		(ev, dx, dy) => {
 			for (const [m, x, y] of orig) {
-				m.x = Math.round(x + dx / S.z);
-				m.y = Math.round(y + dy / S.z);
+				setPos(m, Math.round(x + dx / S.z), Math.round(y + dy / S.z));
 				const el = $(`.node[data-id="${m.id}"]`);
-				if (el) el.style.transform = `translate(${m.x}px,${m.y}px)`;
+				if (el) el.style.transform = `translate(${pos(m).x}px,${pos(m).y}px)`;
 			}
 			renderEdges();
 		},
@@ -597,7 +626,7 @@ function startConnect(e, port, id) {
 	const src = nodeById(S.plan, id);
 	const out = port.classList.contains("out");
 	const want = out ? TYPES[src.type].child : TYPES[src.type].parent;
-	const sx = out ? src.x + W : src.x, sy = src.y + PORT_Y;
+	const sx = out ? pos(src).x + W : pos(src).x, sy = pos(src).y + PORT_Y;
 	cv.classList.add("connecting");
 	$$(".node").forEach((el) => el.classList.toggle("drop-ok", nodeById(S.plan, el.dataset.id)?.type === want));
 	drag(
@@ -926,6 +955,9 @@ addEventListener("keydown", (e) => {
 	const mod = e.metaKey || e.ctrlKey;
 	if (mod && e.key.toLowerCase() === "z") return e.preventDefault(), undo(e.shiftKey);
 	if (mod && e.key.toLowerCase() === "d" && S.sel) return e.preventDefault(), duplicate(S.sel);
+	if (e.key === "[") return setPanels(!panels().left, panels().right);
+	if (e.key === "]") return setPanels(panels().left, !panels().right);
+	if (e.key === "\\") return setPanels(!(panels().left || panels().right), !(panels().left || panels().right));
 	if (S.view !== "canvas") return;
 	if (e.key === "Delete" || e.key === "Backspace") {
 		if (S.selEdge) return mutate((plan) => (nodeById(plan, S.selEdge).parent = null)), (S.selEdge = null);
@@ -937,6 +969,40 @@ addEventListener("keydown", (e) => {
 	if (e.key === "-") zoomBy(1 / 1.2);
 });
 
+// ---------- network canvases, panels ----------
+function renderNetSwitch() {
+	const nets = planNetworks(S.plan);
+	const el = $("#netSwitch");
+	el.hidden = S.view === "brief" || !nets.length;
+	const ads = (k) => S.plan.nodes.filter((n) => n.type === "ad" && (!k || n.data.platform === k)).length;
+	el.innerHTML = [["", "All networks"], ...nets.map((k) => [k, PLATFORMS[k].short])]
+		.map(([k, label]) => `<button data-netview="${k}" class="${S.net === k ? "on" : ""}" ${k ? `style="--c:${PLATFORMS[k].color}"` : ""} title="${k ? `${PLATFORMS[k].name}: its own canvas` : "Every network on one canvas"}">${k ? '<i class="dot"></i>' : ""}${label} <small>${ads(k)}</small></button>`)
+		.join("");
+}
+function setNet(k) {
+	S.net = k;
+	store.set(`cc-net-${S.plan.id}`, k);
+	if (S.sel && !inView(S.plan, nodeById(S.plan, S.sel), k)) S.sel = null;
+	renderAll();
+	if (S.view === "canvas") fit();
+}
+$("#netSwitch").addEventListener("click", (e) => {
+	const b = e.target.closest("[data-netview]");
+	if (b) setNet(b.dataset.netview);
+});
+function setPanels(left, right) {
+	document.body.classList.toggle("hide-left", !left);
+	document.body.classList.toggle("hide-right", !right);
+	$("#toggleLeft").setAttribute("aria-pressed", left);
+	$("#toggleRight").setAttribute("aria-pressed", right);
+	store.set("cc-panels", { left, right });
+	if (S.plan && S.view === "canvas") requestAnimationFrame(applyView);
+}
+const panels = () => ({ left: !document.body.classList.contains("hide-left"), right: !document.body.classList.contains("hide-right") });
+$("#toggleLeft").onclick = () => setPanels(!panels().left, panels().right);
+$("#toggleRight").onclick = () => setPanels(panels().left, !panels().right);
+setPanels(store.get("cc-panels", { left: true, right: true }).left, store.get("cc-panels", { left: true, right: true }).right);
+
 // ---------- top bar, share ----------
 $("#planSel").addEventListener("change", (e) => openPlan(e.target.value));
 $("#planName").addEventListener("input", (e) => mutate((plan) => (plan.name = e.target.value), { coalesce: "plan.name", rerender: "light" }));
@@ -946,7 +1012,7 @@ $("#zoomIn").onclick = () => zoomBy(1.2);
 $("#zoomOut").onclick = () => zoomBy(1 / 1.2);
 $("#zoomFit").onclick = fit;
 $("#tidy").onclick = () => {
-	mutate((plan) => layoutPlan(plan));
+	mutate((plan) => (S.net ? layoutNet(plan, S.net, true) : layoutPlan(plan)));
 	fit();
 };
 $("#newPlan").onclick = () => {
@@ -961,22 +1027,50 @@ async function newPlanFlow(name) {
 function openShare() {
 	const d = $("#shareDlg");
 	const id = S.plan.id;
+	const nets = planNetworks(S.plan);
+	let net = S.net;
+	const q = (extra = "") => { const p = new URLSearchParams(extra); if (net) p.set("net", net); const t = p.toString(); return t ? `?${t}` : ""; };
 	d.innerHTML = `<form method="dialog">
 		<h3>Share “${esc(S.plan.name)}”</h3>
-		<p class="muted small">For sign-off upward and for whoever builds it in each ads manager. Every export has the brief, each network's objective, targeting, finished copy, native mocks and a build checklist.</p>
+		<p class="muted small">For sign-off upward and for whoever builds it in each ads manager. Every export has the brief, each network's objective, targeting, finished copy, native mocks and the build steps.</p>
+		${nets.length > 1 ? `<label class="f"><span class="fl">Covers</span><select id="shareNet">${[["", "All networks"], ...nets.map((k) => [k, `${PLATFORMS[k].name} canvas only`])].map(([k, l]) => `<option value="${k}"${k === net ? " selected" : ""}>${esc(l)}</option>`).join("")}</select></label>` : ""}
 		<div class="share-opts">
-			<div><b>Hand-off pack</b><span class="muted small">One HTML file: open, email, or drop in a drive.</span><a href="/api/plans/${id}/export.html" target="_blank">Preview</a><a href="/api/plans/${id}/export.html?download">Download</a></div>
-			<div><b>Build sheet</b><span class="muted small">CSV, one row per ad, for the person building it.</span><a href="/api/plans/${id}/export.csv">Download CSV</a></div>
+			<div><b>Slide deck (PDF)</b><span class="muted small">Walks through the structure, objectives, budget, targeting and every ad as a mockup. For the sign-off meeting.</span><button type="button" data-pdf>Download PDF</button><a data-href="slides.html" target="_blank">Open slides</a></div>
+			<div><b>Excel workbook</b><span class="muted small">Summary and budget, campaigns, ad sets, the build sheet (one row per ad) and open checks, one tab each.</span><a data-href="export.xlsx">Download .xlsx</a></div>
+			<div><b>Hand-off pack</b><span class="muted small">One HTML file with review and build checklist: open, email, or drop in a drive.</span><a data-href="export.html" target="_blank">Preview</a><a data-href="export.html" data-q="download">Download</a></div>
+			<div><b>Build sheet</b><span class="muted small">CSV, one row per ad, for the person building it.</span><a data-href="export.csv">Download CSV</a></div>
 			<div><b>Brief as Markdown</b><span class="muted small">For Slack, email or a doc.</span><button type="button" data-copy-md>Copy</button></div>
 			<div><b>Private link</b><span class="muted small">Claude publishes the pack to claude.ai and gives you a link to send.</span><button type="button" data-ask="share">Ask Claude</button></div>
 		</div>
 		<label class="f"><span class="fl">Your name on comments</span><input id="meName" value="${esc(store.get("cc-name", ""))}" placeholder="e.g. Sam"></label>
 		<div class="btn-row end"><button value="close">Done</button></div></form>`;
+	const links = () => $$("[data-href]", d).forEach((a) => (a.href = `/api/plans/${id}/${a.dataset.href}${q(a.dataset.q ?? "")}`));
+	links();
 	d.showModal();
+	$("#shareNet", d)?.addEventListener("change", (e) => ((net = e.target.value), links()));
 	$("#meName", d).oninput = (e) => store.set("cc-name", e.target.value.trim());
 	$("[data-copy-md]", d).onclick = async () => {
-		const md = (await api(`/api/plans/${id}/export.md`)).body;
+		const md = (await api(`/api/plans/${id}/export.md${q()}`)).body;
 		await navigator.clipboard.writeText(md).then(() => toast("Brief copied as Markdown."), () => toast("Couldn't reach the clipboard."));
+	};
+	$("[data-pdf]", d).onclick = async (e) => {
+		const btn = e.currentTarget;
+		btn.disabled = true;
+		btn.textContent = "Making PDF…";
+		try {
+			const r = await fetch(`/api/plans/${id}/slides.pdf${q()}`);
+			if (!r.ok) {
+				toast(((await r.json().catch(() => null))?.error ?? "Couldn't make the PDF.") + " Opening the slides to print instead.");
+				open(`/api/plans/${id}/slides.html${q("print")}`, "_blank");
+				return;
+			}
+			const a = Object.assign(document.createElement("a"), { href: URL.createObjectURL(await r.blob()), download: (r.headers.get("content-disposition") ?? "").match(/filename="(.+)"/)?.[1] ?? "slides.pdf" });
+			a.click();
+			setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+		} finally {
+			btn.disabled = false;
+			btn.textContent = "Download PDF";
+		}
 	};
 	$("[data-ask='share']", d).addEventListener("click", () => d.close());
 }

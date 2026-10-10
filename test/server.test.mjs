@@ -45,6 +45,11 @@ test("server: create, save with version check, upload, export, queue a request",
 		withCtx.plan.settings.context.push(ctx);
 		await fetch(`${base}/api/plans/${plan.id}`, { method: "PUT", headers: { "x-base-version": withCtx.version }, body: JSON.stringify(withCtx.plan) });
 
+		const xlsx = await fetch(`${base}/api/plans/${plan.id}/export.xlsx`);
+		assert.equal(xlsx.headers.get("content-type"), "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+		assert.equal(Buffer.from(await xlsx.arrayBuffer()).readUInt32LE(0), 0x04034b50);
+		assert.match(await fetch(`${base}/api/plans/${plan.id}/slides.html?net=meta`).then((r) => r.text()), /class="slide cover"[\s\S]*Meta Ads/);
+
 		const r = await fetch(`${base}/api/request`, { method: "POST", body: JSON.stringify({ kind: "review", planId: plan.id, note: "Be harsh" }) }).then(j);
 		assert.match(r.context, /Review plan[\s\S]*Be harsh/);
 		assert.match(r.context, /Naming convention/);

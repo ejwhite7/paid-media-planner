@@ -7,15 +7,19 @@
 // Usage: node tools/canvas.mjs [--port 4720] [--open]
 //        node tools/canvas.mjs list | new [name] | path <id> | validate <id|file> | layout <id> | export <id> [--out dir]
 //        node tools/canvas.mjs name <id> | attach <id> <ad id> <file> [--card n] | context <id> <file>
+//        export takes --net <network> for one network's canvas; the slide PDF needs Chrome, Edge, Chromium or Brave
+//        installed (or --chrome <path>), otherwise slides.html prints to PDF from any browser.
 //        Every form takes --home <dir> to keep plans somewhere other than ~/.paid-media-planner.
 import { createServer } from "node:http";
 import { spawn } from "node:child_process";
 import { createReadStream, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { basename, dirname, extname, join, resolve } from "node:path";
-import { homedir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
-import { applyNaming, budgetSummary, layoutPlan, newPlan, normalize, lint, nodeById, TYPES, PLATFORMS } from "../studio/model.mjs";
-import { renderBrief, renderCsv, renderMarkdown } from "../studio/brief.mjs";
+import { applyNaming, budgetSummary, layoutPlan, newPlan, normalize, lint, nodeById, viewPlan, TYPES, PLATFORMS } from "../studio/model.mjs";
+import { renderBrief, renderCsv, renderMarkdown, workbookSheets } from "../studio/brief.mjs";
+import { FIT_SCRIPT, renderSlides } from "../studio/slides.mjs";
+import { workbook } from "./xlsx.mjs";
 import { formatLabel } from "../studio/mocks.mjs";
 
 const tools = dirname(fileURLToPath(import.meta.url));
@@ -144,6 +148,69 @@ for (const box of document.querySelectorAll("[data-check]")) {
 </script></body></html>`;
 }
 
+// The slide deck as one self-contained page: fonts, styles and creative inlined, so it prints the same anywhere.
+const FONTS = [["Manrope", 400, "manrope-400"], ["Manrope", 600, "manrope-600"], ["Manrope", 700, "manrope-700"], ["DM Mono", 400, "dm-mono-400"], ["DM Mono", 500, "dm-mono-500"]];
+function exportSlides(plan, { print = false } = {}) {
+	const p = inlineAssets(plan);
+	const fonts = FONTS.map(([family, weight, file]) => `@font-face{font-family:"${family}";font-weight:${weight};src:url(data:font/ttf;base64,${readFileSync(join(studio, "fonts", `${file}.ttf`)).toString("base64")}) format("truetype")}`).join("\n");
+	const css = ["brief.css", "mocks.css", "slides.css"].map((f) => readFileSync(join(studio, f), "utf8")).join("\n");
+	return `<!doctype html>
+<html lang="en" data-theme="light"><head><meta charset="utf-8"><meta name="viewport" content="width=1328">
+<title>${p.name.replace(/[<&]/g, "")} · slides</title><style>${fonts}\n${css}</style></head>
+<body class="slides">
+${renderSlides(p)}
+<script>${FIT_SCRIPT}${print ? "\n(document.fonts?document.fonts.ready:Promise.resolve()).then(()=>setTimeout(()=>{fitMocks();print()},300));" : ""}</script>
+</body></html>`;
+}
+// A Chromium-family browser to print the deck with, if one is installed in the usual place.
+const CHROMES = [
+	"/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+	"/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge",
+	"/Applications/Chromium.app/Contents/MacOS/Chromium",
+	"/Applications/Brave Browser.app/Contents/MacOS/Brave Browser",
+	"/usr/bin/google-chrome",
+	"/usr/bin/google-chrome-stable",
+	"/usr/bin/chromium",
+	"/usr/bin/chromium-browser",
+	"/usr/bin/microsoft-edge",
+	"C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe",
+	"C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe",
+];
+// Browsers Playwright downloaded, newest first, as a fallback.
+function playwrightChromes() {
+	const builds = ["chrome-headless-shell-mac-arm64/chrome-headless-shell", "chrome-headless-shell-mac-x64/chrome-headless-shell", "chrome-headless-shell-linux64/chrome-headless-shell", "chrome-headless-shell-win64/chrome-headless-shell.exe", "chrome-mac-arm64/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing", "chrome-mac-x64/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing", "chrome-mac/Chromium.app/Contents/MacOS/Chromium", "chrome-linux64/chrome", "chrome-linux/chrome", "chrome-win64/chrome.exe", "chrome-win/chrome.exe"];
+	return [join(homedir(), "Library/Caches/ms-playwright"), join(homedir(), ".cache/ms-playwright"), join(homedir(), "AppData/Local/ms-playwright")]
+		.filter((d) => existsSync(d))
+		.flatMap((d) => readdirSync(d).filter((f) => /^chromium(_headless_shell)?-\d+$/.test(f)).sort((a, b) => b.includes("shell") - a.includes("shell") || Number(b.split("-")[1]) - Number(a.split("-")[1])).flatMap((f) => builds.map((b) => join(d, f, b))));
+}
+const findChrome = () => [flag("--chrome"), ...CHROMES, ...playwrightChromes()].find((c) => c && existsSync(c)) ?? null;
+// Prints the deck to PDF with headless Chrome. Resolves the PDF's bytes, or rejects when no browser can do it.
+function slidesPdf(plan) {
+	const chrome = findChrome();
+	if (!chrome) return Promise.reject(fail(501, "No Chrome, Edge, Chromium or Brave found to print the PDF. Open the slides and print them to PDF instead."));
+	const dir = join(tmpdir(), `pmp-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`);
+	mkdirSync(dir, { recursive: true });
+	const html = join(dir, "slides.html");
+	const pdf = join(dir, "slides.pdf");
+	writeFileSync(html, exportSlides(plan));
+	return new Promise((ok, no) => {
+		const child = spawn(chrome, ["--headless=new", "--disable-gpu", "--no-first-run", "--no-default-browser-check", `--user-data-dir=${join(dir, "profile")}`, "--no-pdf-header-footer", "--virtual-time-budget=4000", `--print-to-pdf=${pdf}`, `file://${html}`], { stdio: "ignore" });
+		const timer = setTimeout(() => child.kill(), 60e3);
+		child.on("error", (e) => no(fail(500, `Couldn't start ${chrome}: ${e.message}`)));
+		child.on("exit", () => {
+			clearTimeout(timer);
+			try {
+				ok(readFileSync(pdf));
+			} catch {
+				no(fail(500, "The browser didn't write a PDF. Open the slides and print them to PDF instead."));
+			} finally {
+				rmSync(dir, { recursive: true, force: true });
+			}
+		});
+	});
+}
+const fileSafe = (s) => String(s).toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || "plan";
+
 // The request the canvas queues for Claude, with the context the hook hands over.
 const KIND = {
 	generate: ["Build from prompt", "Build the campaign structure the note describes into this plan: campaigns (objective, networks, budget, schedule), ad sets (audiences) and ads (network, format, finished copy within limits, CTA, URL). Add to what's there unless the note says to replace it. Lay new nodes out with the layout command."],
@@ -225,33 +292,39 @@ const cli = {
 		savePlan(plan);
 		console.log(JSON.stringify({ ...c, file: contextFile(c.path) }));
 	},
-	export: () => {
-		const { plan } = loadPlan(positional[1]);
+	export: async () => {
+		const plan = viewPlan(loadPlan(positional[1]).plan, flag("--net"));
 		const out = resolve(flag("--out", join(home, "exports", plan.id)));
 		mkdirSync(out, { recursive: true });
-		const files = { "plan.html": exportHtml(plan), "build-sheet.csv": renderCsv(plan), "plan.md": renderMarkdown(plan) };
+		const files = { "plan.html": exportHtml(plan), "build-sheet.csv": renderCsv(plan), "plan.md": renderMarkdown(plan), "plan.xlsx": workbook(workbookSheets(plan)), "slides.html": exportSlides(plan) };
+		let pdfNote = null;
+		try {
+			files["slides.pdf"] = await slidesPdf(plan);
+		} catch (e) {
+			pdfNote = e.message;
+		}
 		for (const [f, body] of Object.entries(files)) writeFileSync(join(out, f), body);
-		console.log(JSON.stringify({ dir: out, files: Object.keys(files).map((f) => join(out, f)) }, null, 2));
+		console.log(JSON.stringify({ dir: out, files: Object.keys(files).map((f) => join(out, f)), ...(pdfNote ? { pdf: pdfNote } : {}) }, null, 2));
 	},
 };
 const isMain = process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url);
 if (!isMain);
 else if (cli[positional[0]]) {
-	try {
-		cli[positional[0]]();
-	} catch (e) {
-		console.error(e.message);
-		process.exit(1);
-	}
+	Promise.resolve()
+		.then(() => cli[positional[0]]())
+		.catch((e) => {
+			console.error(e.message);
+			process.exit(1);
+		});
 } else serve();
 
 // --- Server ---
 export function serve(listenPort = port) {
 	port = listenPort;
 	const send = (res, status, body, headers = {}) => {
-		const isStr = typeof body === "string";
-		res.writeHead(status, { "content-type": isStr ? "text/plain; charset=utf-8" : "application/json", "cache-control": "no-store", ...headers });
-		res.end(isStr ? body : JSON.stringify(body));
+		const raw = typeof body === "string" || Buffer.isBuffer(body);
+		res.writeHead(status, { "content-type": raw ? "text/plain; charset=utf-8" : "application/json", "cache-control": "no-store", ...headers });
+		res.end(raw ? body : JSON.stringify(body));
 	};
 	const body = (req, limit = 2e6) =>
 		new Promise((ok, no) => {
@@ -325,9 +398,14 @@ export function serve(listenPort = port) {
 				if (!okId(id)) throw fail(400, "Bad plan id");
 				return send(res, 201, storeContext(id, String(req.headers["x-filename"] ?? "context.md"), await body(req, 1e6)));
 			}
-			if (route === "GET /api/plans/:id/export.html") return send(res, 200, exportHtml(loadPlan(id).plan), { "content-type": "text/html; charset=utf-8", ...(url.searchParams.has("download") ? { "content-disposition": `attachment; filename="${id}.html"` } : {}) });
-			if (route === "GET /api/plans/:id/export.csv") return send(res, 200, renderCsv(loadPlan(id).plan), { "content-type": "text/csv; charset=utf-8", "content-disposition": `attachment; filename="${id}-build-sheet.csv"` });
-			if (route === "GET /api/plans/:id/export.md") return send(res, 200, renderMarkdown(loadPlan(id).plan), { "content-type": "text/markdown; charset=utf-8" });
+			const scoped = () => viewPlan(loadPlan(id).plan, url.searchParams.get("net"));
+			const stem = () => { const p = scoped(); return `${fileSafe(p.name)}${p.viewOf ? `-${p.viewOf}` : ""}`; };
+			if (route === "GET /api/plans/:id/export.xlsx") return send(res, 200, workbook(workbookSheets(scoped())), { "content-type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", "content-disposition": `attachment; filename="${stem()}.xlsx"` });
+			if (route === "GET /api/plans/:id/slides.html") return send(res, 200, exportSlides(scoped(), { print: url.searchParams.has("print") }), { "content-type": "text/html; charset=utf-8" });
+			if (route === "GET /api/plans/:id/slides.pdf") return send(res, 200, await slidesPdf(scoped()), { "content-type": "application/pdf", "content-disposition": `attachment; filename="${stem()}-slides.pdf"` });
+			if (route === "GET /api/plans/:id/export.html") return send(res, 200, exportHtml(scoped()), { "content-type": "text/html; charset=utf-8", ...(url.searchParams.has("download") ? { "content-disposition": `attachment; filename="${id}.html"` } : {}) });
+			if (route === "GET /api/plans/:id/export.csv") return send(res, 200, renderCsv(scoped()), { "content-type": "text/csv; charset=utf-8", "content-disposition": `attachment; filename="${id}-build-sheet.csv"` });
+			if (route === "GET /api/plans/:id/export.md") return send(res, 200, renderMarkdown(scoped()), { "content-type": "text/markdown; charset=utf-8" });
 
 			if (route === "GET /api/request") return send(res, 200, readJson(reqPath));
 			if (route === "POST /api/request") {

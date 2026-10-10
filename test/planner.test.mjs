@@ -132,3 +132,32 @@ test("funnel stage and UGC are inferred for older plans, and UGC keeps its place
 	assert.equal(plan.nodes[2].data.creative, "ugc");
 	assert.match(renderMock(plan.nodes[2].data, {}), /Creator video \(UGC\)/);
 });
+
+test("each network gets its own canvas: positions are kept per network and exports can be scoped", async () => {
+	const { inView, viewPlan, planNetworks } = await import("../studio/model.mjs");
+	const p = normalize(newPlan()).plan;
+	const [c, s] = p.nodes;
+	c.data.platforms = ["meta", "tiktok"];
+	p.nodes.push(newNode("ad", { parent: s.id, platform: "tiktok" }));
+	p.nodes.at(-1).views = { tiktok: { x: 5, y: 6 }, nope: { x: 1, y: 1 } };
+	const { plan } = normalize(p);
+	assert.deepEqual(plan.nodes.at(-1).views, { tiktok: { x: 5, y: 6 } });
+	assert.deepEqual(planNetworks(plan), ["meta", "tiktok"]);
+	assert.deepEqual(plan.nodes.filter((n) => inView(plan, n, "tiktok")).map((n) => n.type), ["campaign", "adset", "ad"]);
+	const tt = viewPlan(plan, "tiktok");
+	assert.deepEqual(tt.nodes[0].data.platforms, ["tiktok"]);
+	assert.equal(tt.nodes.filter((n) => n.type === "ad").length, 1);
+	assert.equal(viewPlan(plan, ""), plan);
+});
+
+test("slide deck walks the plan: cover, brief, structure, campaign, ad set, ads, build", async () => {
+	const { renderSlides } = await import("../studio/slides.mjs");
+	const p = normalize(newPlan("Deck")).plan;
+	p.brief = "Spring promo";
+	p.nodes[2].data.headline = "Mow less, live more";
+	const html = renderSlides(p);
+	const slides = html.match(/<section class="slide/g).length;
+	assert.equal((html.match(/<\/section>/g) ?? []).length, slides, "every slide is closed");
+	assert.ok(slides >= 6);
+	for (const t of ["Spring promo", "Structure", "Mow less, live more", "How it gets built", `${slides} / ${slides}`]) assert.ok(html.includes(t), t);
+});

@@ -233,6 +233,8 @@ export function normalize(input) {
 			status: STATUSES.includes(n.status) ? n.status : "draft",
 			assignee: str(n.assignee),
 			comments: Array.isArray(n.comments) ? n.comments : [],
+			// Positions on each network's own canvas; x/y are the all-networks canvas.
+			views: Object.fromEntries(Object.entries(n.views ?? {}).filter(([k, v]) => PLATFORMS[k] && Number.isFinite(v?.x) && Number.isFinite(v?.y)).map(([k, v]) => [k, { x: v.x, y: v.y }])),
 			data,
 		};
 	}).filter(Boolean);
@@ -526,3 +528,25 @@ export function budgetSummary(plan) {
 		...bp.notes,
 	].join(" ");
 }
+
+// ---------- per-network canvases ----------
+// A plan holds one tree; each network's canvas shows the part of it that runs there: campaigns that include the
+// network, their ad sets, and the ads on that network.
+export function inView(plan, n, platform) {
+	if (!platform) return true;
+	if (n.type === "ad") return n.data.platform === platform;
+	const camp = campaignOf(plan, n);
+	return !!camp && camp.data.platforms.includes(platform);
+}
+// The plan as one network sees it, for exports: other networks' ads dropped, campaigns narrowed to that network.
+export function viewPlan(plan, platform) {
+	if (!platform || !PLATFORMS[platform]) return plan;
+	const p = structuredClone(plan);
+	p.nodes = p.nodes.filter((n) => inView(plan, nodeById(plan, n.id), platform));
+	for (const n of p.nodes) if (n.type === "campaign") n.data.platforms = [platform];
+	p.feedback = { ...p.feedback, items: p.feedback.items.filter((i) => !i.node || p.nodes.some((n) => n.id === i.node)) };
+	p.viewOf = platform;
+	return p;
+}
+// Networks used anywhere in the plan, in catalog order.
+export const planNetworks = (plan) => Object.keys(PLATFORMS).filter((k) => plan.nodes.some((n) => (n.type === "campaign" ? n.data.platforms.includes(k) : n.type === "ad" && n.data.platform === k)));

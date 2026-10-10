@@ -1,7 +1,7 @@
 // The hand-off brief: what a reviewer approves and what the person building it in each ads manager follows. One
 // renderer for the canvas's Brief view and the exported pack, plus CSV (a build sheet, one row per ad per network) and
 // Markdown (for Slack, email or a doc).
-import { FUNNEL, OBJECTIVES, PLATFORMS, STATUS_LABEL, TYPES, FIELD_LABEL, adsetSummary, budgetSummary, childrenOf, issuesByNode, money } from "./model.mjs";
+import { FUNNEL, OBJECTIVES, PLATFORMS, STATUS_LABEL, TYPES, FIELD_LABEL, adsetSummary, budgetPlan, budgetSummary, childrenOf, issuesByNode, money } from "./model.mjs";
 import { esc, formatLabel, renderMock } from "./mocks.mjs";
 
 const list = (a) => (a?.length ? a.join(", ") : "—");
@@ -132,7 +132,8 @@ const cell = (v) => {
 	return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
 };
 
-export function renderCsv(plan) {
+// One row per ad: the build sheet, for CSV and the workbook's Ads sheet.
+export function buildSheet(plan) {
 	const cols = ["Network", "Campaign", "Objective (network's name)", "Budget", "Start", "End", "Ad set", "Locations", "Age", "Genders", "Languages", "Interests", "Custom audiences", "Exclusions", "Placements", "Ad", "Format", "Primary text", "Headline", "Headline 2", "Description", "CTA", "URL", "Display URL", "Media", "Status", "Assignee"];
 	const rows = [cols];
 	for (const ad of plan.nodes.filter((n) => n.type === "ad")) {
@@ -148,7 +149,61 @@ export function renderCsv(plan) {
 			[...d.media, ...d.cards].map((m) => m?.name || (m?.src?.startsWith("data:") ? "embedded" : m?.src)).filter(Boolean), STATUS_LABEL[ad.status], ad.assignee,
 		]);
 	}
-	return rows.map((r) => r.map(cell).join(",")).join("\n") + "\n";
+	return rows;
+}
+export const renderCsv = (plan) => buildSheet(plan).map((r) => r.map(cell).join(",")).join("\n") + "\n";
+
+// The workbook: a summary, then one sheet per level, the build sheet and the open checks. Pure rows; tools/xlsx.mjs
+// writes the file.
+export function workbookSheets(plan) {
+	const camps = plan.nodes.filter((n) => n.type === "campaign");
+	const sets = plan.nodes.filter((n) => n.type === "adset");
+	const ads = plan.nodes.filter((n) => n.type === "ad");
+	const name = (id) => plan.nodes.find((n) => n.id === id)?.data.name ?? "";
+	const bp = budgetPlan(plan.settings);
+	const summary = [
+		["Paid media plan", plan.name],
+		["Brand", plan.brand.name],
+		["Networks", plan.viewOf ? PLATFORMS[plan.viewOf].name : [...new Set(camps.flatMap((c) => c.data.platforms))].map((p) => PLATFORMS[p].name).join(", ")],
+		["Status", STATUS_LABEL[plan.status]],
+		["Owner", plan.owner],
+		["Campaigns / ad sets / ads", `${camps.length} / ${sets.length} / ${ads.length}`],
+		["Exported", new Date().toISOString().slice(0, 16).replace("T", " ")],
+		[],
+		["Brief", plan.brief],
+		[],
+		["Test budget", bp.monthly ? budgetSummary(plan) : "Not set"],
+		[],
+		["Funnel stage", "Weight %", `Monthly (${bp.currency})`, `Daily (${bp.currency})`, "Testable ad sets", "Ads per ad set", "Campaigns in plan"],
+		...bp.stages.map((s) => [s.label, s.weight, bp.monthly ? Math.round(s.monthly) : null, bp.monthly ? Math.round(s.daily) : null, s.adsets, s.ads, camps.filter((c) => c.data.funnel === s.key).length]),
+	];
+	const campaigns = [
+		["Campaign", "Funnel stage", "Objective", "Networks", "Objective to pick in each network", "Budget type", "Amount", "Currency", "Budget level", "Start", "End", "KPI", "Ad sets", "Ads", "Status", "Assignee", "Notes"],
+		...camps.map((c) => {
+			const d = c.data;
+			const kids = childrenOf(plan, c.id);
+			return [d.name, FUNNEL[d.funnel] ?? "", OBJECTIVES[d.objective], d.platforms.map((p) => PLATFORMS[p].short), d.platforms.map((p) => `${PLATFORMS[p].short}: ${PLATFORMS[p].objectives[d.objective]}`), d.budget.type, Number(d.budget.amount) || null, d.budget.currency, d.budget.level === "adset" ? "Ad set (ABO)" : "Campaign (CBO)", d.schedule.start, d.schedule.end, d.kpi, kids.length, kids.reduce((a, s) => a + childrenOf(plan, s.id).length, 0), STATUS_LABEL[c.status], c.assignee, d.notes];
+		}),
+	];
+	const adsets = [
+		["Campaign", "Ad set", "Locations", "Age from", "Age to", "Genders", "Languages", "Interests", "Custom audiences", "Exclusions", "Placements", "Optimize for", "Budget", "Ads", "Status", "Assignee", "Notes"],
+		...sets.map((s) => {
+			const a = s.data;
+			return [name(s.parent), a.name, a.locations, Number(a.ageMin), Number(a.ageMax), gender(a.genders), a.languages, a.interests, a.customAudiences, a.exclusions, a.placements, a.optimization, a.budget ? money(a.budget) : "", childrenOf(plan, s.id).length, STATUS_LABEL[s.status], s.assignee, a.notes];
+		}),
+	];
+	const sheet = buildSheet(plan);
+	sheet[0].push("Creative by", "Generation prompt", "Creative notes");
+	ads.forEach((ad, i) => sheet[i + 1].push(ad.data.creative === "ugc" ? "Creator (UGC)" : "Produced", ad.data.prompt, ad.data.notes));
+	const issues = issuesByNode(plan);
+	const checks = [["Severity", "Where", "Issue", "Suggestion", "From"], ...Object.entries(issues).flatMap(([id, list]) => list.map((i) => [{ error: "Blocker", warn: "Fix", info: "Note", good: "Good" }[i.severity] ?? i.severity, id === "plan" ? "Plan" : name(id), i.text, i.suggestion ?? "", i.source === "claude" ? "Claude" : "Check"]))];
+	return [
+		{ name: "Summary", rows: summary, header: false },
+		{ name: "Campaigns", rows: campaigns },
+		{ name: "Ad sets", rows: adsets },
+		{ name: "Ads (build sheet)", rows: sheet },
+		{ name: "Checks", rows: checks },
+	];
 }
 
 export function renderMarkdown(plan) {

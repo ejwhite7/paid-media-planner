@@ -11,6 +11,7 @@
 </head>
 <body>
 	<header class="top">
+		<button id="toggleLeft" class="icon-btn" title="Hide the left panel ( [ )" aria-pressed="true">◧</button>
 		<div class="logo"><span class="wordmark">GrowthCast</span><span class="product">Paid Media Campaign Planner</span></div>
 		<select id="planSel" title="Open a plan"></select>
 		<button id="newPlan" title="New plan">New</button>
@@ -23,6 +24,7 @@
 		<span id="saveState" class="muted small"></span>
 		<button id="settingsBtn" title="Naming, test budget, funnel weighting, positioning files">Settings</button>
 		<button id="shareBtn" class="primary">Share</button>
+		<button id="toggleRight" class="icon-btn" title="Hide the inspector ( ] )" aria-pressed="true">◨</button>
 	</header>
 	<main>
 		<aside class="left">
@@ -48,6 +50,7 @@
 			<div id="checks"></div>
 		</aside>
 		<section id="stage">
+			<nav id="netSwitch" class="netswitch" aria-label="Network canvas"></nav>
 			<div id="canvasView">
 				<div id="world"><svg id="edges" width="1" height="1"></svg><div id="nodes"></div></div>
 				<div id="emptyHint" hidden><b>Start your plan</b><span>Drag a Campaign in from the left, or describe one under Ask Claude and press Build from prompt.</span></div>

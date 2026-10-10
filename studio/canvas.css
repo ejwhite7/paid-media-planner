@@ -38,7 +38,12 @@ h4 { font-family: var(--mono); font-weight: 400; font-size: 12px; letter-spacing
 .views button { border: 0; background: transparent; padding: 6px 14px; color: var(--fg); }
 .views button.on { background: var(--fg); color: var(--bg); }
 
-main { display: grid; grid-template-columns: 260px 1fr 380px; height: calc(100% - 60px); }
+main { display: grid; grid-template-columns: var(--lw, 260px) 1fr var(--rw, 380px); height: calc(100% - 60px); }
+body.hide-left main { --lw: 0px; } body.hide-right main { --rw: 0px; }
+body.hide-left aside.left, body.hide-right aside.right { display: none; }
+main > aside.left { grid-column: 1; } main > #stage { grid-column: 2; grid-row: 1; } main > aside.right { grid-column: 3; grid-row: 1; }
+.icon-btn { padding: 4px 8px; font-size: 16px; line-height: 1; font-family: inherit; }
+.icon-btn[aria-pressed="false"] { background: var(--fg); color: var(--bg); }
 aside { background: var(--panel); overflow-y: auto; }
 .left { border-right: 1px solid var(--line); padding: 4px 14px 24px; }
 .right { border-left: 1px solid var(--line); }
@@ -232,3 +237,14 @@ table.stages input { width: 70px; }
 .toggle { display: flex; gap: 8px; align-items: center; font-size: 13px; margin-bottom: 8px; }
 .toggle input { width: auto; }
 .n-ugc { font-family: var(--mono); font-size: 10.5px; padding: 0 5px; border: 1px solid #e5484d; color: #e5484d; margin-left: 4px; }
+
+/* Floating network switch: each network's own canvas */
+#stage { position: relative; }
+.netswitch { position: absolute; top: 12px; left: 50%; transform: translateX(-50%); z-index: 5; display: flex; gap: 0; border: 1px solid var(--fg); background: var(--panel); box-shadow: 0 6px 20px rgba(0,0,0,.12); max-width: calc(100% - 24px); overflow-x: auto; }
+.netswitch[hidden] { display: none; }
+.netswitch button { border: 0; border-right: 1px solid var(--line); display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; padding: 7px 12px; }
+.netswitch button:last-child { border-right: 0; }
+.netswitch button.on { background: var(--fg); color: var(--bg); }
+.netswitch .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--c); box-shadow: 0 0 0 1px rgba(128,128,128,.45); }
+.netswitch small { opacity: .6; font-size: 10.5px; }
+#mocksView { padding-top: 56px; }
