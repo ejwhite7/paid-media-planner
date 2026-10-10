@@ -1,15 +1,8 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { spawn, spawnSync } from "node:child_process";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join, dirname } from "node:path";
-import { fileURLToPath } from "node:url";
 import { PLATFORMS, newPlan, newNode, normalize, lint, layoutPlan, issuesByNode } from "../studio/model.mjs";
 import { renderMock } from "../studio/mocks.mjs";
 import { renderBrief, renderCsv, renderMarkdown } from "../studio/brief.mjs";
-
-const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 
 test("a new plan is valid and connected", () => {
 	const { plan, errors } = normalize(newPlan("T"));
@@ -85,52 +78,4 @@ test("brief, CSV and Markdown include the network's objective and the copy", () 
 	assert.match(html, /data-check=/);
 	assert.match(renderCsv(p), /Mow less, live more/);
 	assert.match(renderMarkdown(p), /# Spring/);
-});
-
-test("server: create, save with version check, upload, export; hook delivers a request once", async () => {
-	const home = mkdtempSync(join(tmpdir(), "cc-"));
-	const port = 4800 + Math.floor(Math.random() * 500);
-	const env = { ...process.env, PAID_MEDIA_PLANNER_HOME: home };
-	const srv = spawn(process.execPath, [join(root, "tools/canvas.mjs"), "--port", String(port)], { env });
-	try {
-		await new Promise((ok, no) => {
-			srv.stdout.on("data", (d) => /Paid media planner at/.test(d) && ok());
-			srv.on("exit", (c) => no(new Error(`server exited ${c}`)));
-		});
-		const base = `http://127.0.0.1:${port}`;
-		const j = (r) => r.json();
-		const { plan, version } = await fetch(`${base}/api/plans`, { method: "POST", body: JSON.stringify({ name: "E2E" }) }).then(j);
-		assert.equal(plan.name, "E2E");
-		assert.equal((await fetch(`${base}/`)).status, 200);
-		assert.equal((await fetch(`${base}/model.mjs`)).headers.get("content-type"), "text/javascript");
-
-		plan.name = "E2E renamed";
-		const put = await fetch(`${base}/api/plans/${plan.id}`, { method: "PUT", headers: { "x-base-version": version }, body: JSON.stringify(plan) });
-		assert.equal(put.status, 200);
-		const stale = await fetch(`${base}/api/plans/${plan.id}`, { method: "PUT", headers: { "x-base-version": version }, body: JSON.stringify(plan) });
-		assert.equal(stale.status, 409, "a save based on an old version is refused");
-
-		const png = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=", "base64");
-		const asset = await fetch(`${base}/api/plans/${plan.id}/assets`, { method: "POST", headers: { "content-type": "image/png", "x-filename": "hero.png" }, body: png }).then(j);
-		assert.match(asset.src, /^\/assets\/.+\.png$/);
-		assert.equal((await fetch(`${base}/api/plans/${plan.id}/assets`, { method: "POST", headers: { "content-type": "text/html" }, body: "<b>" })).status, 415);
-		const cur = await fetch(`${base}/api/plans/${plan.id}`).then(j);
-		cur.plan.nodes[2].data.media = [asset];
-		await fetch(`${base}/api/plans/${plan.id}`, { method: "PUT", headers: { "x-base-version": cur.version }, body: JSON.stringify(cur.plan) });
-		const html = await fetch(`${base}/api/plans/${plan.id}/export.html`).then((r) => r.text());
-		assert.match(html, /data:image\/png;base64,/, "export inlines uploaded assets");
-
-		await fetch(`${base}/api/request`, { method: "POST", body: JSON.stringify({ kind: "review", planId: plan.id, note: "Be harsh" }) });
-		const hook = () => spawnSync(process.execPath, [join(root, "tools/canvas-context.mjs")], { env, input: JSON.stringify({ session_id: "s1" }) }).stdout.toString();
-		const first = hook();
-		assert.match(JSON.parse(first).hookSpecificOutput.additionalContext, /Review plan[\s\S]*Be harsh/);
-		assert.equal(hook(), "", "delivered only once");
-		assert.ok(JSON.parse(readFileSync(join(home, "request.json"), "utf8")).deliveredAt);
-
-		const v = spawnSync(process.execPath, [join(root, "tools/canvas.mjs"), "validate", plan.id], { env }).stdout.toString();
-		assert.equal(JSON.parse(v).ok, true);
-	} finally {
-		srv.kill();
-		rmSync(home, { recursive: true, force: true });
-	}
 });

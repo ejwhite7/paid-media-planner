@@ -6,7 +6,9 @@ import { readFileSync, renameSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 
-const reqPath = join(resolve(process.env.PAID_MEDIA_PLANNER_HOME ?? join(homedir(), ".paid-media-planner")), "request.json");
+const args = process.argv.slice(2);
+const home = args.includes("--home") ? args[args.indexOf("--home") + 1] : join(homedir(), ".paid-media-planner");
+const reqPath = join(resolve(home), "request.json");
 
 try {
 	const input = JSON.parse(readFileSync(0, "utf8") || "{}");

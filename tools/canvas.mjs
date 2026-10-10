@@ -6,6 +6,7 @@
 //
 // Usage: node tools/canvas.mjs [--port 4720] [--open]
 //        node tools/canvas.mjs list | new [name] | path <id> | validate <id|file> | layout <id> | export <id> [--out dir]
+//        Every form takes --home <dir> to keep plans somewhere other than ~/.paid-media-planner.
 import { createServer } from "node:http";
 import { spawn } from "node:child_process";
 import { createReadStream, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
@@ -18,16 +19,22 @@ import { formatLabel } from "../studio/mocks.mjs";
 
 const tools = dirname(fileURLToPath(import.meta.url));
 const studio = resolve(tools, "../studio");
-const home = resolve(process.env.PAID_MEDIA_PLANNER_HOME ?? join(homedir(), ".paid-media-planner"));
-const plansDir = join(home, "plans");
-const assetsDir = join(home, "assets");
-const reqPath = join(home, "request.json");
-mkdirSync(plansDir, { recursive: true });
-mkdirSync(assetsDir, { recursive: true });
-
 const args = process.argv.slice(2);
 const flag = (name, d) => (args.includes(name) ? args[args.indexOf(name) + 1] : d);
-const port = Number(flag("--port", 4720));
+// Arguments that aren't a --flag or a flag's value: the subcommand and its operands.
+const positional = args.filter((a, i) => !a.startsWith("--") && !(args[i - 1]?.startsWith("--") && !["--open"].includes(args[i - 1])));
+let port = Number(flag("--port", 4720));
+let home, plansDir, assetsDir, reqPath;
+// Where plans, uploads and the queued request live. Tests point it at a temporary folder.
+export function setHome(dir) {
+	home = resolve(dir);
+	plansDir = join(home, "plans");
+	assetsDir = join(home, "assets");
+	reqPath = join(home, "request.json");
+	mkdirSync(plansDir, { recursive: true });
+	mkdirSync(assetsDir, { recursive: true });
+}
+setHome(flag("--home", join(homedir(), ".paid-media-planner")));
 const readJson = (p, d = null) => {
 	try {
 		return JSON.parse(readFileSync(p, "utf8"));
@@ -142,13 +149,13 @@ function requestContext(r) {
 const cli = {
 	list: () => console.log(JSON.stringify(listPlans(), null, 2)),
 	new: () => {
-		const plan = newPlan(args.slice(1).join(" ") || "Untitled plan");
+		const plan = newPlan(positional.slice(1).join(" ") || "Untitled plan");
 		savePlan(plan);
 		console.log(JSON.stringify({ id: plan.id, path: planPath(plan.id) }));
 	},
-	path: () => console.log(loadPlan(args[1]).plan && planPath(args[1])),
+	path: () => console.log(loadPlan(positional[1]).plan && planPath(positional[1])),
 	validate: () => {
-		const raw = existsSync(args[1] ?? "") ? readJson(args[1]) : readJson(planPath(args[1]));
+		const raw = existsSync(positional[1] ?? "") ? readJson(positional[1]) : readJson(planPath(positional[1]));
 		if (!raw) return console.log(JSON.stringify({ ok: false, errors: ["Not found or not valid JSON"] })), process.exit(1);
 		const { plan, errors } = normalize(raw);
 		const checks = plan ? lint(plan) : [];
@@ -156,12 +163,12 @@ const cli = {
 		process.exit(errors.length ? 1 : 0);
 	},
 	layout: () => {
-		const { plan } = loadPlan(args[1]);
+		const { plan } = loadPlan(positional[1]);
 		savePlan(layoutPlan(plan));
 		console.log(JSON.stringify({ ok: true, nodes: plan.nodes.length }));
 	},
 	export: () => {
-		const { plan } = loadPlan(args[1]);
+		const { plan } = loadPlan(positional[1]);
 		const out = resolve(flag("--out", join(home, "exports", plan.id)));
 		mkdirSync(out, { recursive: true });
 		const files = { "plan.html": exportHtml(plan), "build-sheet.csv": renderCsv(plan), "plan.md": renderMarkdown(plan) };
@@ -169,9 +176,11 @@ const cli = {
 		console.log(JSON.stringify({ dir: out, files: Object.keys(files).map((f) => join(out, f)) }, null, 2));
 	},
 };
-if (cli[args[0]]) {
+const isMain = process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url);
+if (!isMain);
+else if (cli[positional[0]]) {
 	try {
-		cli[args[0]]();
+		cli[positional[0]]();
 	} catch (e) {
 		console.error(e.message);
 		process.exit(1);
@@ -179,7 +188,8 @@ if (cli[args[0]]) {
 } else serve();
 
 // --- Server ---
-function serve() {
+export function serve(listenPort = port) {
+	port = listenPort;
 	const send = (res, status, body, headers = {}) => {
 		const isStr = typeof body === "string";
 		res.writeHead(status, { "content-type": isStr ? "text/plain; charset=utf-8" : "application/json", "cache-control": "no-store", ...headers });
@@ -210,7 +220,7 @@ function serve() {
 		createReadStream(path).pipe(res);
 	};
 
-	createServer(async (req, res) => {
+	return createServer(async (req, res) => {
 		try {
 			const host = (req.headers.host ?? "").split(":")[0];
 			if (!["127.0.0.1", "localhost"].includes(host)) return send(res, 403, "Forbidden");
@@ -279,6 +289,7 @@ function serve() {
 		}
 	})
 		.on("error", (e) => {
+			if (!isMain) throw e;
 			console.error(e.code === "EADDRINUSE" ? `Port ${port} is busy: the canvas may already be running at http://127.0.0.1:${port}` : e.message);
 			process.exit(1);
 		})

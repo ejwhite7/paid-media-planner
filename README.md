@@ -51,8 +51,8 @@ skills/paid-media-planner   how Claude builds, reviews and edits plans
 commands/                /paid-media-planner:open, /paid-media-planner:share
 ```
 
-Plans are JSON files in `~/.paid-media-planner/plans/`, and uploaded creative goes in `~/.paid-media-planner/assets/`. Set
-`PAID_MEDIA_PLANNER_HOME` to keep them somewhere else. Saves are version-checked, so an edit made by Claude and one made in
+Plans are JSON files in `~/.paid-media-planner/plans/`, and uploaded creative goes in `~/.paid-media-planner/assets/`. Pass
+`--home <dir>` on `tools/canvas.mjs` to keep them somewhere else. Saves are version-checked, so an edit made by Claude and one made in
 the canvas can't silently overwrite each other.
 
 Networks rename objectives and change limits. Update `PLATFORMS` in `studio/model.mjs` when they do. Objective names
@@ -78,7 +78,7 @@ Everything stays on your machine unless you choose to share it.
   that request to the message you're sending, once, and marks it delivered. It never blocks a message, and it sends
   nothing anywhere else.
 - **Fonts in exported packs.** The exported HTML loads Manrope and DM Mono from Google Fonts when someone opens it. The
-  canvas itself uses the bundled copies in `studio/fonts/`.
+  canvas itself uses copies bundled with the plugin.
 - **Sharing is opt-in.** A private claude.ai link is created only when you run `/paid-media-planner:share` or press
   **Ask Claude** in the Share dialog, and only after you've reviewed the plan.
 
