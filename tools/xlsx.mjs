@@ -63,18 +63,21 @@ export function zip(files) {
 const x = (s) => String(s).replace(/[<>&"]/g, (c) => ({ "<": "&lt;", ">": "&gt;", "&": "&amp;", '"': "&quot;" })[c]).replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f]/g, "");
 const col = (i) => (i >= 26 ? col(Math.floor(i / 26) - 1) : "") + String.fromCharCode(65 + (i % 26));
 
-// sheets: [{ name, rows: [[cell]], header = true }]; a cell is a string, a number, null, or an array (joined with "; ").
-// Style 1 is the header, 2 wraps long text.
+// sheets: [{ name, rows: [[cell]], header = true }]; a cell is a string, a number, null, an array (joined with "; "), or
+// { v, style: "head" | "label" } to style one cell. Styles: 0 plain, 1 header, 2 wrapped text, 3 bold label. All top-aligned.
+const STYLE = { head: 1, wrap: 2, label: 3 };
+const plain = (v) => (v && typeof v === "object" && !Array.isArray(v) ? v.v : v);
 function sheetXml({ rows, header = true }) {
 	const width = Math.max(1, ...rows.map((r) => r.length));
-	const widths = Array.from({ length: width }, (_, c) => Math.min(60, Math.max(8, ...rows.map((r) => String(Array.isArray(r[c]) ? r[c].join("; ") : r[c] ?? "").split("\n")[0].length + 2))));
+	const widths = Array.from({ length: width }, (_, c) => Math.min(60, Math.max(8, ...rows.map((r) => { const v = plain(r[c]); return String(Array.isArray(v) ? v.join("; ") : v ?? "").split("\n")[0].length + 2; }))));
 	const body = rows
 		.map((r, ri) => {
 			const cells = r
-				.map((v, ci) => {
+				.map((cell, ci) => {
 					const ref = `${col(ci)}${ri + 1}`;
+					const v = plain(cell);
 					if (v == null || v === "") return "";
-					const style = header && ri === 0 ? ' s="1"' : "";
+					const style = (header && ri === 0) || cell?.style ? ` s="${STYLE[cell?.style] ?? 1}"` : "";
 					if (typeof v === "number" && Number.isFinite(v)) return `<c r="${ref}"${style}><v>${v}</v></c>`;
 					const s = Array.isArray(v) ? v.join("; ") : String(v);
 					return `<c r="${ref}" t="inlineStr"${style || (s.length > 60 || s.includes("\n") ? ' s="2"' : "")}><is><t xml:space="preserve">${x(s.slice(0, 32000))}</t></is></c>`;
@@ -108,7 +111,7 @@ export function workbook(sheets) {
 		},
 		{
 			name: "xl/styles.xml",
-			data: `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><fonts count="2"><font><sz val="11"/><name val="Calibri"/></font><font><b/><sz val="11"/><color rgb="FFFFFFFF"/><name val="Calibri"/></font></fonts><fills count="3"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill><fill><patternFill patternType="solid"><fgColor rgb="FF242426"/><bgColor indexed="64"/></patternFill></fill></fills><borders count="1"><border><left/><right/><top/><bottom/><diagonal/></border></borders><cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs><cellXfs count="3"><xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/><xf numFmtId="0" fontId="1" fillId="2" borderId="0" xfId="0" applyFont="1" applyFill="1"/><xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0" applyAlignment="1"><alignment wrapText="1" vertical="top"/></xf></cellXfs><cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles></styleSheet>`,
+			data: `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><fonts count="3"><font><sz val="11"/><name val="Calibri"/></font><font><b/><sz val="11"/><color rgb="FFFFFFFF"/><name val="Calibri"/></font><font><b/><sz val="11"/><name val="Calibri"/></font></fonts><fills count="3"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill><fill><patternFill patternType="solid"><fgColor rgb="FF242426"/><bgColor indexed="64"/></patternFill></fill></fills><borders count="1"><border><left/><right/><top/><bottom/><diagonal/></border></borders><cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0" applyAlignment="1"><alignment vertical="top"/></xf></cellStyleXfs><cellXfs count="4"><xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0" applyAlignment="1"><alignment vertical="top"/></xf><xf numFmtId="0" fontId="1" fillId="2" borderId="0" xfId="0" applyFont="1" applyFill="1" applyAlignment="1"><alignment vertical="top"/></xf><xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0" applyAlignment="1"><alignment wrapText="1" vertical="top"/></xf><xf numFmtId="0" fontId="2" fillId="0" borderId="0" xfId="0" applyFont="1" applyAlignment="1"><alignment vertical="top"/></xf></cellXfs><cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles></styleSheet>`,
 		},
 		...sheets.map((s, i) => ({ name: `xl/worksheets/sheet${i + 1}.xml`, data: sheetXml(s) })),
 	];

@@ -183,11 +183,13 @@ function playwrightChromes() {
 		.filter((d) => existsSync(d))
 		.flatMap((d) => readdirSync(d).filter((f) => /^chromium(_headless_shell)?-\d+$/.test(f)).sort((a, b) => b.includes("shell") - a.includes("shell") || Number(b.split("-")[1]) - Number(a.split("-")[1])).flatMap((f) => builds.map((b) => join(d, f, b))));
 }
+// Opt-in, for machines without a Chromium-family browser: Playwright's ~100 MB headless shell, which findChrome picks up.
+export const PDF_SETUP = "npx -y playwright@1.56.1 install chromium-headless-shell";
 const findChrome = () => [flag("--chrome"), ...CHROMES, ...playwrightChromes()].find((c) => c && existsSync(c)) ?? null;
 // Prints the deck to PDF with headless Chrome. Resolves the PDF's bytes, or rejects when no browser can do it.
 function slidesPdf(plan) {
 	const chrome = findChrome();
-	if (!chrome) return Promise.reject(fail(501, "No Chrome, Edge, Chromium or Brave found to print the PDF. Open the slides and print them to PDF instead."));
+	if (!chrome) return Promise.reject(fail(501, `No Chrome, Edge, Chromium or Brave found to print the PDF. Install one, or run "${PDF_SETUP}" once, then try again. Until then, print the slides to PDF from your browser.`));
 	const dir = join(tmpdir(), `pmp-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`);
 	mkdirSync(dir, { recursive: true });
 	const html = join(dir, "slides.html");

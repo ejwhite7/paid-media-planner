@@ -82,7 +82,8 @@ Everything stays on your machine unless you choose to share it.
   nothing anywhere else.
 - **A headless browser, for the PDF only.** When you download the slide-deck PDF, the server prints it with Chrome,
   Edge, Chromium or Brave if one is installed (or Playwright's copy), run headless on a temporary file and closed
-  straight after. Without one, the deck opens in your browser to print to PDF.
+  straight after. Without one, the deck opens in your browser to print to PDF, or run
+  `npx -y playwright@1.56.1 install chromium-headless-shell` once to give it Playwright's headless browser.
 - **Fonts in exported packs.** The exported HTML loads Manrope and DM Mono from Google Fonts when someone opens it. The
   canvas itself uses copies bundled with the plugin.
 - **No credentials.** The plugin never asks for or stores API keys. Design creative uses only the tools you have

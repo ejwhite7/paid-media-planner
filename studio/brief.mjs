@@ -197,6 +197,10 @@ export function workbookSheets(plan) {
 	ads.forEach((ad, i) => sheet[i + 1].push(ad.data.creative === "ugc" ? "Creator (UGC)" : "Produced", ad.data.prompt, ad.data.notes));
 	const issues = issuesByNode(plan);
 	const checks = [["Severity", "Where", "Issue", "Suggestion", "From"], ...Object.entries(issues).flatMap(([id, list]) => list.map((i) => [{ error: "Blocker", warn: "Fix", info: "Note", good: "Good" }[i.severity] ?? i.severity, id === "plan" ? "Plan" : name(id), i.text, i.suggestion ?? "", i.source === "claude" ? "Claude" : "Check"]))];
+	// Bold the summary's labels and give its funnel table a header row.
+	for (const r of summary) if (r.length && typeof r[0] === "string") r[0] = { v: r[0], style: r[0] === "Funnel stage" ? "head" : "label" };
+	const head = summary.find((r) => r[0]?.style === "head");
+	for (let i = 1; i < head.length; i++) head[i] = { v: head[i], style: "head" };
 	return [
 		{ name: "Summary", rows: summary, header: false },
 		{ name: "Campaigns", rows: campaigns },

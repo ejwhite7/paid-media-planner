@@ -12,7 +12,8 @@ Share a paid media planner plan.
 3. Export: `node "${CLAUDE_PLUGIN_ROOT}/tools/canvas.mjs" export <id>`. It writes `plan.html` (self-contained: brief,
    each network's objective, targeting, copy, native mocks, build checklist), `slides.pdf` (a 16:9 deck walking through
    structure, budget, targeting and every ad as a mockup; printed with a local Chrome-family browser, and skipped with a
-   note if there isn't one, in which case `slides.html` prints to PDF from any browser), `plan.xlsx`, `build-sheet.csv`
+   note if there isn't one: offer to run `npx -y playwright@1.56.1 install chromium-headless-shell` and export again, or print
+   `slides.html` to PDF from any browser), `plan.xlsx`, `build-sheet.csv`
    and `plan.md`. Add `--net <network>` when the user wants one network's canvas only.
 4. Read `plan.html`, then publish it as a private claude.ai Artifact (load the artifact-design skill first; keep the page
    as exported apart from what that skill requires). Give the user the link and say that it's private until they share it.
