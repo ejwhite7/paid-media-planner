@@ -3,7 +3,8 @@
 // canvas adopts it. Node graph: campaign → ad set → ad, parent links drawn as edges from out-ports to in-ports.
 import { PLATFORMS, OBJECTIVES, TYPES, STATUSES, STATUS_LABEL, FIELD_LABEL, newNode, nodeById, childrenOf, campaignOf, subtree, issuesByNode, adsetSummary, money, layoutPlan, firstFormat, uid } from "./model.mjs";
 import { inView, planNetworks } from "./model.mjs";
-import { FUNNEL, FUNNEL_LABEL, NAME_TOKENS, applyNaming, budgetPlan, conventionName, labelOf, normalizeSettings, suggestedBudget } from "./model.mjs";
+import { FUNNEL, FUNNEL_LABEL, NAME_TOKENS, applyNaming, budgetPlan, conventionName, labelOf, normalize } from "./model.mjs";
+import { CATALOG, bidLevel, bidStrategies, budgetLevels, channelPlans, defaultNative, derivedBudget, goalLabel, goalsFor, googleTypes, nativeObjective, objectiveLabel, options } from "./model.mjs";
 import { renderMock, esc, formatLabel } from "./mocks.mjs";
 import { renderBrief } from "./brief.mjs";
 
@@ -28,8 +29,8 @@ const store = {
 };
 const S = { plans: [], plan: null, version: null, sel: null, selEdge: null, tab: store.get("cc-tab", {}), view: "canvas", z: 1, px: 40, py: 20, saving: false, dirty: false, undo: [], redo: [], request: null, allFormats: false, lastKey: null, lastAt: 0 };
 // Web mode is the hosted planner inside the GrowthCast client portal. env.js sets window.PLANNER_ENV and fills in the
-// signed-in person, their role and their projects once the portal hands over a token. Staff edit; clients review:
-// they comment and set statuses, and the server enforces the same. The Claude Code plugin leaves it unset.
+// signed-in person, their role and their projects once the portal hands over a token. Staff edit; clients only view,
+// and the server enforces the same. The Claude Code plugin leaves it unset.
 const ENV = window.PLANNER_ENV ?? { mode: "local" };
 const WEB = ENV.mode === "web";
 let READONLY = false;
@@ -88,6 +89,7 @@ async function openPlan(id) {
 }
 let saveTimer;
 function scheduleSave() {
+	if (READONLY) return;
 	S.dirty = true;
 	setSave("Unsaved");
 	clearTimeout(saveTimer);
@@ -165,8 +167,9 @@ function mutate(fn, { coalesce = null, rerender = "all" } = {}) {
 	S.lastKey = coalesce;
 	S.lastAt = Date.now();
 	fn(S.plan);
-	S.plan.settings = normalizeSettings(S.plan.settings);
-	if (S.plan.settings.naming.auto) applyNaming(S.plan);
+	// Same shaping as the server: derived budgets, one network per campaign, names on the convention.
+	const shaped = normalize(S.plan);
+	if (!shaped.errors.length) S.plan = { ...shaped.plan, id: S.plan.id };
 	scheduleSave();
 	rerender === "all" ? renderAll() : renderLight();
 	if ($("#settingsDlg").open) renderSettingsOut();
@@ -194,6 +197,7 @@ function conform(plan, ad) {
 	if (camp?.data.platforms.length && !camp.data.platforms.includes(ad.data.platform)) {
 		ad.data.platform = camp.data.platforms[0];
 		ad.data.format = firstFormat(ad.data.platform);
+		if (!PLATFORMS[ad.data.platform].ctas.includes(ad.data.cta)) ad.data.cta = PLATFORMS[ad.data.platform].ctas[0];
 	}
 }
 function addNode(type, { x, y, parent = null, data = {} } = {}) {
@@ -286,8 +290,8 @@ function nodeHtml(n, issues) {
 	const t = TYPES[n.type];
 	let body = "";
 	if (n.type === "campaign")
-		body = `<div class="n-line"><span class="k">Objective</span> ${OBJECTIVES[d.objective] ?? d.objective}</div><div class="n-nets">${d.platforms.map((p) => `<span class="net" style="--c:${PLATFORMS[p].color}">${PLATFORMS[p].short}</span>`).join("") || '<span class="muted">No networks</span>'}</div><div class="n-line muted">${money(d.budget)}</div>`;
-	if (n.type === "adset") body = `<div class="n-line">${esc(adsetSummary(d))}</div>${d.interests.length ? `<div class="n-tags">${d.interests.slice(0, 3).map((i) => `<span>${esc(i)}</span>`).join("")}${d.interests.length > 3 ? `<span>+${d.interests.length - 3}</span>` : ""}</div>` : ""}`;
+		body = `<div class="n-line"><span class="k">Objective</span> ${esc(objectiveLabel(n))}</div><div class="n-nets">${d.platforms.map((p) => `<span class="net" style="--c:${PLATFORMS[p].color}">${PLATFORMS[p].short}</span>`).join("") || '<span class="muted">No networks</span>'}</div><div class="n-line muted">${money(d.budget)}</div>`;
+	if (n.type === "adset") body = `<div class="n-line">${esc(adsetSummary(d, campaignOf(S.plan, n)?.data.platforms[0]))}</div>${d.optimization ? `<div class="n-line muted">${esc(goalLabel(S.plan, n))}</div>` : ""}${d.interests.length ? `<div class="n-tags">${d.interests.slice(0, 3).map((i) => `<span>${esc(i)}</span>`).join("")}${d.interests.length > 3 ? `<span>+${d.interests.length - 3}</span>` : ""}</div>` : ""}`;
 	if (n.type === "ad") body = `<div class="n-ad"><div class="n-thumb">${thumb(n)}</div><div class="n-adtext"><div class="n-hl">${esc(d.headline || "—")}</div><div class="n-line muted"><span class="net" style="--c:${PLATFORMS[d.platform]?.color}">${PLATFORMS[d.platform]?.short ?? d.platform}</span> ${esc(PLATFORMS[d.platform]?.formats[d.format]?.name ?? "")}${d.creative === "ugc" ? '<span class="n-ugc">UGC</span>' : ""}</div></div></div>`;
 	return `<div class="node t-${n.type}${S.sel === n.id ? " sel" : ""}" data-id="${n.id}" style="transform:translate(${pos(n).x}px,${pos(n).y}px)">
 	<div class="n-head"><span class="n-type">${t.label} <i>· ${t.sub}</i></span><span class="n-badges">${badges(issues)}</span></div>
@@ -420,8 +424,8 @@ const cnt = (v, max) => (max ? `<span class="cnt${(v ?? "").length > max ? " ove
 
 function renderInspector() {
 	renderInspectorHtml();
-	// Reviewers read everything and can only comment and set statuses.
-	if (READONLY) for (const el of $$("#inspector input, #inspector textarea, #inspector select, #inspector button")) if (!el.matches("[data-tab], [data-comment], #commentText, [data-bind='status'], [data-resolve]")) el.disabled = true;
+	// Viewers read everything and change nothing.
+	if (READONLY) for (const el of $$("#inspector input, #inspector textarea, #inspector select, #inspector button")) if (!el.matches("[data-tab]")) el.disabled = true;
 }
 function renderInspectorHtml() {
 	const el = $("#inspector");
@@ -456,44 +460,73 @@ function planInspector() {
 		<div class="btn-row"><button data-plan-dup>Duplicate plan</button><button data-plan-del class="danger">Delete plan</button></div>
 	</div>`;
 }
-function suggestionHtml(n) {
-	const sug = suggestedBudget(S.plan, n);
-	if (!sug) return `<p class="sug muted">${S.plan.settings.budget.monthly ? "Pick a funnel stage to get a suggested budget." : "Set a monthly test budget in Settings to get a suggested budget."}</p>`;
-	const same = n.data.budget.type === "daily" && Number(n.data.budget.amount) === sug.amount;
-	return `<p class="sug"><span>Suggested <b>${sug.currency} ${sug.amount}/day</b> · ${FUNNEL[n.data.funnel]} ${sug.stage.weight}% of ${sug.currency} ${S.plan.settings.budget.monthly.toLocaleString()}/mo${sug.peers > 1 ? `, split ${sug.peers} ways` : ""}</span>${same ? "" : `<button data-apply-budget="${n.id}">Use</button>`}</p>`;
-}
-function applySuggested(plan, ids) {
-	for (const id of ids) {
-		const c = nodeById(plan, id);
-		const sug = c && suggestedBudget(plan, c);
-		if (sug) Object.assign(c.data.budget, { type: "daily", amount: sug.amount, currency: sug.currency });
-	}
+// ---------- forms: every option comes from the network's catalog (platforms.mjs) ----------
+const opts = (list) => options(list).map((o) => [o.id, o.label]);
+const checks = (bind, list, chosen) => `<div class="cks">${options(list).map((o) => `<label class="ck"><input type="checkbox" data-multi="${bind}" value="${esc(o.id)}"${chosen.includes(o.id) ? " checked" : ""}> ${esc(o.label)}</label>`).join("")}</div>`;
+const LEGACY_DIMS = ["interests", "customAudiences", "exclusions"];
+const dimBind = (key) => (LEGACY_DIMS.includes(key) ? `data.${key}` : `data.targeting.${key}`);
+const dimValue = (d, key) => (LEGACY_DIMS.includes(key) ? d[key] : d.targeting?.[key] ?? []);
+const confirmMark = (x) => (x?.confirm ? ' <small class="warn" title="Couldn\'t be checked against an official page">confirm in ads manager</small>' : "");
+function budgetHtml(n) {
+	const d = n.data;
+	const der = derivedBudget(S.plan, n);
+	const P = PLATFORMS[der.network];
+	if (!der.monthly) return `<p class="sug muted">Budgets are set per channel. Set ${P.short}'s monthly budget in <a href="#" data-open-settings>Settings</a>.</p>`;
+	const why = `${P.short} ${der.currency} ${der.monthly.toLocaleString()}/mo${der.stage ? ` × ${FUNNEL[der.stage]} ${Math.round(der.share * 100)}%` : ""}${der.peers > 1 ? ` ÷ ${der.peers} campaigns` : ""}`;
+	return `<p class="sug"><span><b>${der.currency} ${der.daily}/day</b> · ${esc(why)}</span><a href="#" data-open-settings>Change</a></p>`;
 }
 function campaignForm(n) {
 	const d = n.data;
+	const net = d.platforms[0] ?? "meta";
+	const C = CATALOG[net];
+	const native = nativeObjective(net, d.nativeObjective);
+	const level = bidLevel(net, d.budget.level);
+	const bids = bidStrategies(net, d.campaignType);
+	const bid = bids.find((b) => b.id === d.bidStrategy);
 	return `
-	<div class="f"><span class="fl">Networks <small class="muted">click to toggle, or drag a network onto the node</small></span><div class="chips">${Object.entries(PLATFORMS).map(([k, p]) => `<button class="chip${d.platforms.includes(k) ? " on" : ""}" data-net="${k}" style="--c:${p.color}">${p.short}</button>`).join("")}</div></div>
-	<div class="row2">${f("Objective", sel("data.objective", Object.entries(OBJECTIVES), d.objective, "data-re"))}${f("Funnel stage", sel("data.funnel", [["", "—"], ...Object.entries(FUNNEL)], d.funnel, "data-re"))}</div>
-	${d.platforms.length ? `<table class="native"><tbody>${d.platforms.map((p) => `<tr><td>${PLATFORMS[p].short}</td><td>${esc(PLATFORMS[p].objectives[d.objective] ?? "—")}</td></tr>`).join("")}</tbody></table><p class="muted small">The objective to pick in each ads manager. * means closest match: confirm when building.</p>` : ""}
-	<div class="row3">${f("Budget", sel("data.budget.type", [["daily", "Daily"], ["lifetime", "Lifetime"]], d.budget.type))}${f("Amount", inp("data.budget.amount", d.budget.amount, 'type="number" min="0" data-kind="num"'))}${f("Currency", inp("data.budget.currency", d.budget.currency, 'maxlength="3"'))}</div>
-	${suggestionHtml(n)}
-	${f("Budget set at", sel("data.budget.level", [["campaign", "Campaign (CBO / Advantage+)"], ["adset", "Each ad set (ABO)"]], d.budget.level))}
+	<div class="f"><span class="fl">Network <small class="muted">a campaign runs on one network</small></span><div class="chips">${Object.entries(PLATFORMS).map(([k, p]) => `<button class="chip${net === k ? " on" : ""}" data-net="${k}" style="--c:${p.color}">${p.short}</button>`).join("")}</div></div>
+	<div class="row2">${f(`Objective <small class="muted">as ${PLATFORMS[net].short} names it</small>`, sel("data.nativeObjective", C.objectives.map((o) => [o.id, o.label + (o.confirm ? " *" : "")]), d.nativeObjective, "data-re"))}${f("Funnel stage", sel("data.funnel", [["", "—"], ...Object.entries(FUNNEL)], d.funnel, "data-re"))}</div>
+	${confirmMark(native) ? `<p class="small">${confirmMark(native)}</p>` : ""}
+	${net === "google" ? `${f("Campaign type", sel("data.campaignType", googleTypes().map((t) => [t.id, t.label]), d.campaignType, "data-re"))}
+	${d.campaignType === "SEARCH" || d.campaignType === "DISPLAY" ? `<div class="f"><span class="fl">Networks</span>${checks("data.networks", CATALOG.google.networks, d.networks)}</div>` : ""}
+	${f("Locations <small class=\"muted\">a Google campaign setting</small>", listInp("data.locations", d.locations, "United States, Austin TX"))}
+	${f("Languages", listInp("data.languages", d.languages, "English"))}` : ""}
+	${C.special ? f("Special ad category", sel("data.special", opts(C.special), d.special, "data-re")) : ""}
+	<div class="f"><span class="fl">Daily budget <small class="muted">from the channel budget</small></span>${budgetHtml(n)}</div>
+	${budgetLevels(net).length > 1 ? f("Budget set at", sel("data.budget.level", budgetLevels(net), d.budget.level, "data-re")) : `<p class="muted small">${esc(budgetLevels(net)[0][1])}</p>`}
+	${level === "campaign" ? `<div class="row2">${f("Bid strategy", sel("data.bidStrategy", [["", "—"], ...bids.map((b) => [b.id, b.label])], d.bidStrategy, "data-re"))}${bid?.flag ? f(bid.flag === "roas" ? "Target ROAS %" : `Target (${d.budget.currency})`, inp("data.bidAmount", d.bidAmount, 'type="number" min="0" step="any" data-kind="num"')) : ""}</div>` : ""}
 	<div class="row2">${f("Start", inp("data.schedule.start", d.schedule.start, 'type="date"'))}${f("End", inp("data.schedule.end", d.schedule.end, 'type="date"'))}</div>
 	${f("KPI / target", inp("data.kpi", d.kpi, 'placeholder="e.g. CPL under $40, 120 leads/month"'))}
 	${f("Notes", area("data.notes", d.notes, 3))}
-	<button class="wide" data-add="${n.id}">+ Add ad set</button>`;
+	<button class="wide" data-add="${n.id}">+ Add ${PLATFORMS[net].levels[1].toLowerCase()}</button>`;
 }
 function adsetForm(n) {
 	const d = n.data;
+	const camp = campaignOf(S.plan, n);
+	const net = camp?.data.platforms[0] ?? "meta";
+	const C = CATALOG[net];
+	const native = nativeObjective(net, camp?.data.nativeObjective);
+	const goals = goalsFor(net, native?.id);
+	const age = C.age;
+	const level = bidLevel(net, camp?.data.budget.level);
+	const bids = bidStrategies(net, camp?.data.campaignType);
+	const bid = bids.find((b) => b.id === d.bidStrategy);
+	const range = (lo, hi, plusAt) => Array.from({ length: hi - lo + 1 }, (_, i) => lo + i).map((v) => [v, v === plusAt ? `${v}+` : String(v)]);
+	let ageHtml = `<p class="muted small">${PLATFORMS[net].short} doesn't target by age.</p>`;
+	if (age?.kind === "range") ageHtml = `<div class="row2">${f("Age from", sel("data.ageMin", range(age.min, age.max, -1), d.ageMin, 'data-kind="num"'))}${f("to", sel("data.ageMax", range(age.min, age.max, age.plusAt), d.ageMax, 'data-kind="num"'))}</div>${age.confirm ? `<p class="small">${confirmMark(age)}</p>` : ""}`;
+	if (age?.kind === "x") ageHtml = `<div class="row2">${f("Age from", sel("data.ageMin", age.from.map((v) => [v, String(v)]), d.ageMin, 'data-kind="num"'))}${f("to", sel("data.ageMax", age.to.map((v) => [v, v ? String(v) : "and up"]), d.ageMax, 'data-kind="num"'))}</div>`;
+	if (age?.kind === "buckets") ageHtml = `<div class="f"><span class="fl">Age groups <small class="muted">none ticked = all ages</small></span>${checks("data.ageBuckets", age.options, d.ageBuckets)}</div>`;
+	const manual = Array.isArray(d.placements);
 	return `
-	${f("Locations", listInp("data.locations", d.locations, "United States, Austin TX +25mi"))}
-	<div class="row3">${f("Age from", inp("data.ageMin", d.ageMin, 'type="number" min="13" max="65" data-kind="num"'))}${f("to", inp("data.ageMax", d.ageMax, 'type="number" min="13" max="65" data-kind="num"'))}${f("Gender", sel("data.genders", [["all", "All"], ["female", "Women"], ["male", "Men"]], d.genders))}</div>
-	${f("Languages", listInp("data.languages", d.languages, "English"))}
-	${f("Interests & keywords", `<textarea data-bind="data.interests" data-kind="list" rows="2" placeholder="Home improvement, Lawn care">${esc(d.interests.join(", "))}</textarea>`)}
-	${f("Custom / lookalike audiences", listInp("data.customAudiences", d.customAudiences, "Site visitors 30d, 1% LAL of customers"))}
-	${f("Exclusions", listInp("data.exclusions", d.exclusions, "Existing customers"))}
-	${f("Placements", inp("data.placements", d.placements, 'placeholder="automatic"'))}
-	${f("Optimize for", inp("data.optimization", d.optimization, 'placeholder="e.g. Leads, Landing page views"'))}
+	${C.geoLevel === "campaign" ? `<p class="muted small">Locations and languages are set on the ${PLATFORMS[net].short} campaign.</p>` : `${f("Locations", listInp("data.locations", d.locations, "United States, Austin TX +25mi"))}${f("Languages", listInp("data.languages", d.languages, "English"))}`}
+	${native?.destinations ? f("Conversion location", sel("data.destination", [["", "—"], ...native.destinations.map((x) => [x, x])], d.destination, "data-re")) : ""}
+	${goals.length ? f(`Performance goal <small class="muted">${esc(native.label)}</small>`, sel("data.optimization", [["", "—"], ...goals.map((g) => [g.id, g.label]), ...(d.optimization && !goals.some((g) => g.id === d.optimization) ? [[d.optimization, `${d.optimization} (not offered)`]] : [])], d.optimization, "data-re")) : f(`Conversion goal <small class="muted">${PLATFORMS[net].short} optimizes to the campaign's bid strategy and these conversions</small>`, inp("data.optimization", d.optimization, 'placeholder="e.g. Paid signup (Purchase)"'))}
+	${ageHtml}
+	${f("Gender", sel("data.genders", opts(C.genders), d.genders))}
+	${options(C.targeting).map((t) => f(esc(t.label), `<textarea data-bind="${dimBind(t.id)}" data-kind="list" rows="2">${esc(dimValue(d, t.id).join(", "))}</textarea>`)).join("")}
+	${C.placements ? `<div class="f"><span class="fl">Placements</span>${sel("data.placements", [["automatic", C.placements.automatic], ["manual", "Choose placements"]], manual ? "manual" : "automatic", 'data-placemode data-re')}${manual ? checks("data.placements", C.placements.options, d.placements) : ""}</div>` : ""}
+	${level === "adset" ? `<div class="row2">${f("Bid strategy", sel("data.bidStrategy", [["", "—"], ...bids.map((b) => [b.id, b.label])], d.bidStrategy, "data-re"))}${bid?.flag ? f(bid.flag === "roas" ? "Target ROAS %" : `Target (${camp?.data.budget.currency ?? "USD"})`, inp("data.bidAmount", d.bidAmount, 'type="number" min="0" step="any" data-kind="num"')) : ""}</div>` : ""}
+	${d.budget ? `<div class="f"><span class="fl">Daily budget <small class="muted">campaign budget split across its ${PLATFORMS[net].levels[1].toLowerCase()}s</small></span><p class="sug"><b>${esc(money(d.budget))}</b></p></div>` : ""}
 	${f("Notes", area("data.notes", d.notes, 3))}
 	<button class="wide" data-add="${n.id}">+ Add ad</button>`;
 }
@@ -506,19 +539,37 @@ function adForm(n) {
 	const P = PLATFORMS[d.platform];
 	const L = P.limits;
 	const search = d.format === "search";
+	const camp = campaignOf(S.plan, n);
+	const type = d.platform === "google" ? googleTypes().find((t) => t.id === camp?.data.campaignType) : null;
+	const formats = Object.entries(P.formats).filter(([k]) => !type || type.formats.includes(k));
 	return `
-	<div class="row2">${f("Network", sel("data.platform", netOptions(n).map((k) => [k, PLATFORMS[k].name]), d.platform, "data-re"))}${f("Format", sel("data.format", Object.entries(P.formats).map(([k, v]) => [k, v.name]), d.format, "data-re"))}</div>
+	<div class="row2">${f("Network", `<input value="${esc(P.name)}" disabled>`)}${f("Format", sel("data.format", formats.map(([k, v]) => [k, v.name]), d.format, "data-re"))}</div>
 	${search ? "" : f("Primary text", area("data.primaryText", d.primaryText, 4), cnt(d.primaryText, L.primaryText))}
 	${f(search ? "Headline 1" : "Headline", inp("data.headline", d.headline), cnt(d.headline, L.headline))}
 	${search ? f("Headline 2", inp("data.headline2", d.headline2), cnt(d.headline2, L.headline2)) : ""}
-	${f("Description", area("data.description", d.description, 2), cnt(d.description, L.description))}
-	<div class="row2">${f("Call to action", sel("data.cta", [...new Set([...P.ctas, d.cta])].map((c) => [c, c]), d.cta))}${f("Display URL", inp("data.displayUrl", d.displayUrl))}</div>
+	${search ? f("More headlines <small class=\"muted\">one per line, up to 13 more, 30 characters each</small>", `<textarea data-bind="data.extraHeadlines" data-kind="lines" rows="4">${esc(d.extraHeadlines.join("\n"))}</textarea>`) : ""}
+	${f(search ? "Description 1" : "Description", area("data.description", d.description, 2), cnt(d.description, L.description))}
+	${search ? f("More descriptions <small class=\"muted\">one per line, up to 3 more, 90 characters each</small>", `<textarea data-bind="data.extraDescriptions" data-kind="lines" rows="3">${esc(d.extraDescriptions.join("\n"))}</textarea>`) : ""}
+	${search ? `<div class="row2">${f("Path 1", inp("data.path1", d.path1, 'maxlength="15"'), cnt(d.path1, 15))}${f("Path 2", inp("data.path2", d.path2, 'maxlength="15"'), cnt(d.path2, 15))}</div>` : ""}
+	<div class="row2">${search ? "" : f("Call to action", sel("data.cta", [...P.ctas, ...(P.ctas.includes(d.cta) ? [] : [d.cta])].map((c) => [c, P.ctas.includes(c) ? c : `${c} (not offered)`]), d.cta))}${f("Display URL", inp("data.displayUrl", d.displayUrl))}</div>
 	${f("Landing page URL", inp("data.url", d.url, 'type="url"'))}
 	<div class="f"><span class="fl">Creative</span><div class="media-list">${d.media.map((m, i) => `<div class="mi">${m.kind === "video" ? `<video src="${esc(m.src)}" muted></video>` : `<img src="${esc(m.src)}" alt="">`}<button data-media-rm="${i}" title="Remove">✕</button></div>`).join("")}<button class="mi add" data-upload>+ Upload</button></div>
 		<input class="url-add" data-media-url placeholder="…or paste an image URL and press Enter"></div>
 	${f("Creative made by", sel("data.creative", [["produced", "Produced (designed or generated)"], ["ugc", "Creator (UGC): keep the placeholder"]], d.creative, "data-re"))}
 	${d.creative === "ugc" ? "" : f("Generation prompt / shot list", area("data.prompt", d.prompt, 3, 'placeholder="What Design creative should make: scene, subject, composition, text overlay, motion."'))}
 	${f(d.creative === "ugc" ? "Creator brief" : "Notes / creative direction", area("data.notes", d.notes, 3, 'placeholder="Shot, subject, text overlay, music…"'))}`;
+}
+// Switching a campaign's network: native objective, budget level and bids reset to what that network offers, and its
+// ads move to the network's first format.
+function setNetwork(plan, campId, net) {
+	const c = nodeById(plan, campId);
+	if (!c || c.data.platforms[0] === net) return;
+	c.data.platforms = [net];
+	c.data.nativeObjective = defaultNative(net, c.data.objective)?.id ?? "";
+	c.data.budget.level = budgetLevels(net)[0][0];
+	Object.assign(c.data, { bidStrategy: "", bidAmount: "", special: "NONE", campaignType: net === "google" ? "SEARCH" : "", networks: net === "google" ? ["search"] : [] });
+	for (const a of childrenOf(plan, c.id)) Object.assign(a.data, { optimization: "", destination: "", bidStrategy: "", bidAmount: "", placements: "automatic", ageBuckets: [] });
+	for (const a of subtree(plan, c.id).map((i) => nodeById(plan, i)).filter((x) => x.type === "ad")) conform(plan, a);
 }
 function fmtChoices(n) {
 	return netOptions(n).flatMap((p) => Object.entries(PLATFORMS[p].formats).map(([k, v]) => ({ p, k, label: `${PLATFORMS[p].short} · ${v.name}` })));
@@ -566,7 +617,7 @@ function renderMocks() {
 		h += `<section class="mv-camp"><h2><span class="lvl lvl-campaign">Campaign</span> ${esc(c.data.name)}</h2>`;
 		for (const s of childrenOf(S.plan, c.id)) {
 			const kids = childrenOf(S.plan, s.id).filter((a) => inView(S.plan, a, S.net));
-			h += `<h3><span class="lvl lvl-adset">Ad set</span> ${esc(s.data.name)} <small class="muted">${esc(adsetSummary(s.data))}</small></h3><div class="mv-grid">${kids.map(host).join("") || '<p class="muted">No ads.</p>'}</div>`;
+			h += `<h3><span class="lvl lvl-adset">Ad set</span> ${esc(s.data.name)} <small class="muted">${esc(adsetSummary(s.data, c.data.platforms[0]))}</small></h3><div class="mv-grid">${kids.map(host).join("") || '<p class="muted">No ads.</p>'}</div>`;
 		}
 		h += `</section>`;
 	}
@@ -749,15 +800,8 @@ cv.addEventListener("drop", async (e) => {
 		return addNode(value, { x: Math.round(w.x - W / 2), y: Math.round(w.y - 30) });
 	}
 	if (kind === "net") {
-		if (t?.type === "campaign") return mutate((plan) => (nodeById(plan, t.id).data.platforms = [...new Set([...t.data.platforms, value])]));
-		if (t?.type === "ad")
-			return mutate((plan) => {
-				const ad = nodeById(plan, t.id);
-				const camp = campaignOf(plan, ad);
-				if (camp && !camp.data.platforms.includes(value)) camp.data.platforms.push(value);
-				ad.data.platform = value;
-				ad.data.format = firstFormat(value);
-			});
+		if (t?.type === "campaign") return mutate((plan) => setNetwork(plan, t.id, value));
+		if (t?.type === "ad") return toast("An ad runs on its campaign's network. Drop the network on the campaign to switch it.");
 		if (!t) return addNode("campaign", { x: Math.round(w.x - W / 2), y: Math.round(w.y - 30), data: { platforms: [value] } });
 		toast("Drop a network on a campaign or an ad.");
 	}
@@ -800,6 +844,7 @@ function pickFiles(multiple = false) {
 // ---------- delegated events: inspector, mocks, panels ----------
 function bindValue(el) {
 	if (el.dataset.kind === "list") return el.value.split(",").map((s) => s.trim()).filter(Boolean);
+	if (el.dataset.kind === "lines") return el.value.split("\n").map((s) => s.trim()).filter(Boolean);
 	if (el.dataset.kind === "num") return el.value === "" ? "" : Number(el.value);
 	return el.value;
 }
@@ -810,6 +855,14 @@ function onField(e) {
 		if (el.dataset.pbind === "name") $("#planName").value = el.value;
 		if (el.dataset.pbind.startsWith("brand.") && e.type === "change") renderAll();
 		return;
+	}
+	if (el.dataset.multi && e.type === "change") {
+		const vals = $$(`#inspector [data-multi="${el.dataset.multi}"]:checked`).map((x) => x.value);
+		return mutate((plan) => setPath(nodeById(plan, S.sel), el.dataset.multi, vals));
+	}
+	if (el.dataset.placemode != null && e.type === "change") {
+		const all = options(CATALOG[campaignOf(S.plan, nodeById(S.plan, S.sel))?.data.platforms[0]]?.placements?.options).map((o) => o.id);
+		return mutate((plan) => (nodeById(plan, S.sel).data.placements = el.value === "manual" ? all : "automatic"));
 	}
 	if (!el.dataset.bind) return;
 	const n = nodeById(S.plan, S.sel);
@@ -853,12 +906,7 @@ document.addEventListener("click", async (e) => {
 	if (b("[data-dup]")) return duplicate(S.sel);
 	if (b("[data-del]")) return removeNode(S.sel);
 	if ((el = b("[data-net]")))
-		return mutate((plan) => {
-			const c = nodeById(plan, S.sel);
-			const k = el.dataset.net;
-			c.data.platforms = c.data.platforms.includes(k) ? c.data.platforms.filter((p) => p !== k) : [...c.data.platforms, k];
-			for (const a of subtree(plan, c.id).map((i) => nodeById(plan, i)).filter((n) => n.type === "ad")) conform(plan, a);
-		});
+		return mutate((plan) => setNetwork(plan, S.sel, el.dataset.net));
 	if ((el = b("[data-setfmt]")) || (el = b("[data-use]"))) {
 		const [p, fmt] = (el.dataset.setfmt ?? el.dataset.use).split(":");
 		const id = el.closest("[data-ad]")?.dataset.ad ?? S.sel;
@@ -913,7 +961,7 @@ document.addEventListener("click", async (e) => {
 		return pollRequest();
 	}
 	if (b("[data-share]")) return openShare();
-	if ((el = b("[data-apply-budget]"))) return mutate((plan) => applySuggested(plan, [el.dataset.applyBudget]));
+	if (b("[data-open-settings]")) return e.preventDefault(), openSettings();
 	// Mock media slots: remove, add a carousel card, or pick a file.
 	const host = b("[data-ad]");
 	if (host && (el = b("[data-rm]"))) {
@@ -1159,9 +1207,12 @@ function openSettings() {
 			<div class="preview-names" id="namePreview"></div>
 			<div class="btn-row"><button type="button" data-rename>Rename everything now</button></div>
 		</div>
-		<div class="set-sec"><h4>Test budget</h4>
-			<div class="row3">${f("Monthly budget", `<input type="number" min="0" step="100" data-sbind="budget.monthly" data-kind="num" value="${st.budget.monthly || ""}" placeholder="e.g. 6000">`)}${f("Currency", `<input maxlength="3" data-sbind="budget.currency" value="${esc(st.budget.currency)}">`)}${f("Cost per result, if known", `<input type="number" min="0" step="1" data-sbind="budget.cpa" data-kind="num" value="${st.budget.cpa || ""}" placeholder="e.g. 35">`)}</div>
-			<p class="muted small">Sizes the structure to what the budget can test. Each ad set needs roughly 50 results a week (or at least 20 a day) to leave learning, and each ad needs enough spend to be read. Build from prompt stays within it, and the checks warn when the plan outgrows it.</p>
+		<div class="set-sec"><h4>Channel budgets</h4>
+			<p class="muted small">Set a monthly budget per channel. Each channel's budget splits across its campaigns by the funnel weights below, and campaign and ad set budgets follow from it. It also sizes what each channel can test: an ad set needs roughly 50 results a week (or the network's daily minimum) to leave learning, and each ad needs enough spend to be read.</p>
+			<table class="stages chan"><thead><tr><th>Channel</th><th>Monthly budget</th><th>Cost per result, if known</th></tr></thead><tbody>
+			${[...new Set([...planNetworks(S.plan), ...Object.keys(st.channels)])].map((k) => `<tr><td><b>${PLATFORMS[k].short}</b></td><td><input type="number" min="0" step="100" data-sbind="channels.${k}.monthly" data-kind="num" value="${st.channels[k]?.monthly || ""}" placeholder="e.g. 3000"></td><td><input type="number" min="0" step="1" data-sbind="channels.${k}.cpa" data-kind="num" value="${st.channels[k]?.cpa || ""}" placeholder="e.g. 35"></td></tr>`).join("") || '<tr><td colspan="3" class="muted">Add a campaign to set its channel budget.</td></tr>'}
+			</tbody></table>
+			${f("Currency", `<input maxlength="3" data-sbind="budget.currency" value="${esc(st.budget.currency)}" style="width:90px">`)}
 			<div class="row3">${Object.keys(FUNNEL).map((k) => f(`${FUNNEL[k]} weight %`, `<input type="number" min="0" max="100" data-sbind="funnel.${k}" data-kind="num" value="${st.funnel[k]}" title="${esc(FUNNEL_LABEL[k])}">`)).join("")}</div>
 			<div id="budgetOut"></div>
 		</div>
@@ -1179,18 +1230,21 @@ function renderSettingsOut() {
 	const st = S.plan.settings;
 	const sample = ["campaign", "adset", "ad"].map((t) => S.plan.nodes.find((n) => n.type === t)).filter(Boolean);
 	$("#namePreview", d).innerHTML = sample.map((n) => `<span>${esc(conventionName(S.plan, n))}</span>`).join("") || '<span class="muted">Add a campaign to preview names.</span>';
-	const bp = budgetPlan(st);
-	const cur = bp.currency;
-	const have = (t) => S.plan.nodes.filter((n) => n.type === t).length;
-	const camps = S.plan.nodes.filter((n) => n.type === "campaign");
-	const staged = camps.filter((c) => c.data.funnel);
-	$("#budgetOut", d).innerHTML = `
-		<table class="stages"><thead><tr><th>Stage</th><th>Weight</th><th>Monthly</th><th>Daily</th><th>Testable</th><th>Campaigns</th></tr></thead><tbody>
-		${bp.stages.map((s) => `<tr><td title="${esc(FUNNEL_LABEL[s.key])}"><b>${s.label}</b></td><td>${s.weight}%</td><td>${bp.monthly ? `${cur} ${Math.round(s.monthly).toLocaleString()}` : "—"}</td><td>${bp.monthly ? `${cur} ${Math.round(s.daily)}` : "—"}</td><td>${s.adsets ? `${s.adsets} ad set${s.adsets > 1 ? "s" : ""} × ${s.ads} ads` : bp.monthly && s.weight ? "fold in" : "—"}</td><td>${camps.filter((c) => c.data.funnel === s.key).length}</td></tr>`).join("")}
+	const plans = channelPlans(S.plan);
+	const camps = (net) => S.plan.nodes.filter((n) => n.type === "campaign" && n.data.platforms[0] === net);
+	const count = (t, net) => S.plan.nodes.filter((n) => n.type === t && campaignOf(S.plan, n)?.data.platforms[0] === net).length;
+	$("#budgetOut", d).innerHTML = plans
+		.map((bp) => {
+			const cur = bp.currency;
+			const P = PLATFORMS[bp.network];
+			return `<h5 class="chan-h">${P.short}${bp.monthly ? ` · ${cur} ${bp.monthly.toLocaleString()}/mo` : ""}</h5>
+		<table class="stages"><thead><tr><th>Stage</th><th>Weight</th><th>Daily</th><th>Testable</th><th>Campaigns</th></tr></thead><tbody>
+		${bp.stages.map((s) => `<tr><td title="${esc(FUNNEL_LABEL[s.key])}"><b>${s.label}</b></td><td>${s.weight}%</td><td>${bp.monthly ? `${cur} ${Math.round(s.daily)}` : "—"}</td><td>${s.adsets ? `${s.adsets} ${P.levels[1].toLowerCase()}${s.adsets > 1 ? "s" : ""} × ${s.ads} ads` : bp.monthly && s.weight ? "fold in" : "—"}</td><td>${camps(bp.network).filter((c) => c.data.funnel === s.key).length}</td></tr>`).join("")}
 		</tbody></table>
-		${bp.monthly ? `<p class="small">Supports about <b>${bp.campaigns} campaign${bp.campaigns === 1 ? "" : "s"}, ${bp.adsets} ad sets and ${bp.ads} ads</b> at ${cur} ${Math.round(bp.perAdsetDaily)}+/day per ad set. The plan has ${have("campaign")}, ${have("adset")} and ${have("ad")}.</p>` : ""}
-		${bp.notes.length ? `<ul class="set-notes">${bp.notes.map((x) => `<li>${esc(x)}</li>`).join("")}</ul>` : ""}
-		${bp.monthly && staged.length ? `<div class="btn-row"><button type="button" data-apply-all>Use suggested budgets on ${staged.length} staged campaign${staged.length === 1 ? "" : "s"}</button></div>` : bp.monthly ? '<p class="muted small">Give each campaign a funnel stage to get a suggested budget.</p>' : ""}`;
+		${bp.monthly ? `<p class="small">Supports about <b>${bp.campaigns} campaign${bp.campaigns === 1 ? "" : "s"}, ${bp.adsets} ${P.levels[1].toLowerCase()}s and ${bp.ads} ads</b> at ${cur} ${Math.round(bp.perAdsetDaily)}+/day each. The plan has ${count("campaign", bp.network)}, ${count("adset", bp.network)} and ${count("ad", bp.network)}.</p>` : ""}
+		${bp.notes.length ? `<ul class="set-notes">${bp.notes.map((x) => `<li>${esc(x)}</li>`).join("")}</ul>` : ""}`;
+		})
+		.join("");
 	$("#ctxList", d).innerHTML = st.context.map((c, i) => `<li><span><a href="${esc(c.path)}" target="_blank">${esc(c.name)}</a> <small class="muted">${(c.size / 1024).toFixed(1)} KB</small></span><button type="button" data-ctx-rm="${i}">Remove</button></li>`).join("") || '<li class="muted">No files yet.</li>';
 }
 $("#settingsDlg").addEventListener("input", (e) => {
@@ -1213,7 +1267,6 @@ $("#settingsDlg").addEventListener("click", async (e) => {
 		mutate((plan) => (n = applyNaming(plan)));
 		return toast(n ? `Renamed ${n} node${n === 1 ? "" : "s"} to the convention.` : "Every name already follows the convention.");
 	}
-	if (b("[data-apply-all]")) return mutate((plan) => applySuggested(plan, plan.nodes.filter((n) => n.type === "campaign" && n.data.funnel).map((n) => n.id)));
 	if ((el = b("[data-ctx-rm]"))) return mutate((plan) => plan.settings.context.splice(Number(el.dataset.ctxRm), 1));
 	if (b("[data-ctx-add]")) {
 		const files = await new Promise((ok) => {
@@ -1270,6 +1323,8 @@ addEventListener("resize", () => S.view === "canvas" && applyView());
 		await ENV.ready;
 		READONLY = ENV.role !== "staff";
 		document.body.classList.toggle("readonly", READONLY);
+		$("#planName").readOnly = READONLY;
+		$("#planStatus").disabled = READONLY;
 		document.body.classList.add("web");
 	}
 	await refreshPlanList();

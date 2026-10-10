@@ -1,13 +1,14 @@
 // The hand-off brief: what a reviewer approves and what the person building it in each ads manager follows. One
 // renderer for the canvas's Brief view and the exported pack, plus CSV (a build sheet, one row per ad per network) and
 // Markdown (for Slack, email or a doc).
-import { FUNNEL, OBJECTIVES, PLATFORMS, STATUS_LABEL, TYPES, FIELD_LABEL, adsetSummary, budgetPlan, budgetSummary, childrenOf, issuesByNode, money } from "./model.mjs";
+import { FUNNEL, OBJECTIVES, PLATFORMS, STATUS_LABEL, TYPES, FIELD_LABEL, adsetFacts, adsetSummary, budgetPlan, budgetSummary, campaignFacts, childrenOf, goalLabel, issuesByNode, money, objectiveLabel } from "./model.mjs";
 import { esc, formatLabel, renderMock } from "./mocks.mjs";
 
 const list = (a) => (a?.length ? a.join(", ") : "—");
 const gender = (g) => ({ all: "All", male: "Men", female: "Women" })[g] ?? g ?? "All";
 const pill = (status) => `<span class="st st-${status}">${STATUS_LABEL[status] ?? status}</span>`;
 const who = (n) => (n.assignee ? `<span class="who">@${esc(n.assignee)}</span>` : "");
+const kvRows = (rows) => rows.map(([k, v]) => `<tr><th>${esc(k)}</th><td>${esc(v)}</td></tr>`).join("");
 const SEV = { error: "Blocker", warn: "Fix", info: "Note", good: "Good" };
 
 function copyRows(ad) {
@@ -60,34 +61,19 @@ export function renderBrief(plan, { interactive = false } = {}) {
 		h += `<section class="camp" id="b-${c.id}">
 <h2><span class="lvl lvl-campaign">Campaign</span> ${esc(d.name)} ${pill(c.status)} ${who(c)}</h2>
 <table class="kv">
-	<tr><th>Objective</th><td>${OBJECTIVES[d.objective] ?? d.objective}</td></tr>
+	${kvRows(campaignFacts(c))}
 	${d.funnel ? `<tr><th>Funnel stage</th><td>${FUNNEL[d.funnel]}</td></tr>` : ""}
-	<tr><th>Budget</th><td>${money(d.budget)}${d.budget.level === "adset" ? " (set per ad set)" : ""}</td></tr>
 	<tr><th>Schedule</th><td>${d.schedule.start || "Start on approval"} → ${d.schedule.end || "Ongoing"}</td></tr>
 	${d.kpi ? `<tr><th>KPI</th><td>${esc(d.kpi)}</td></tr>` : ""}
 	${d.notes ? `<tr><th>Notes</th><td class="pre">${esc(d.notes)}</td></tr>` : ""}
 </table>
-<table class="grid"><thead><tr><th>Network</th><th>Objective to pick</th><th>Levels there</th></tr></thead><tbody>${d.platforms
-			.map((p) => {
-				const o = PLATFORMS[p].objectives[d.objective] ?? "—";
-				return `<tr><td><i class="dot" style="background:${PLATFORMS[p].color}"></i>${PLATFORMS[p].name}</td><td>${esc(o.replace(/\*$/, ""))}${o.endsWith("*") ? ' <small class="warn">closest match, confirm</small>' : ""}</td><td>${PLATFORMS[p].levels.join(" → ")}</td></tr>`;
-			})
-			.join("")}</tbody></table>
 ${issueList(issues[c.id] ?? [])}`;
 		for (const s of childrenOf(plan, c.id)) {
 			const a = s.data;
 			h += `<div class="adset" id="b-${s.id}">
 <h3><span class="lvl lvl-adset">Ad set</span> ${esc(a.name)} ${pill(s.status)} ${who(s)}</h3>
 <table class="kv">
-	<tr><th>Locations</th><td>${esc(list(a.locations))}</td></tr>
-	<tr><th>Age · gender</th><td>${a.ageMin}–${a.ageMax}${Number(a.ageMax) >= 65 ? "+" : ""} · ${gender(a.genders)}</td></tr>
-	${a.languages.length ? `<tr><th>Languages</th><td>${esc(list(a.languages))}</td></tr>` : ""}
-	<tr><th>Interests</th><td>${esc(list(a.interests))}</td></tr>
-	<tr><th>Custom audiences</th><td>${esc(list(a.customAudiences))}</td></tr>
-	<tr><th>Exclusions</th><td>${esc(list(a.exclusions))}</td></tr>
-	<tr><th>Placements</th><td>${esc(a.placements || "Automatic")}</td></tr>
-	${a.optimization ? `<tr><th>Optimize for</th><td>${esc(a.optimization)}</td></tr>` : ""}
-	${a.budget ? `<tr><th>Budget</th><td>${money(a.budget)}</td></tr>` : ""}
+	${kvRows(adsetFacts(plan, s))}
 	${a.notes ? `<tr><th>Notes</th><td class="pre">${esc(a.notes)}</td></tr>` : ""}
 </table>
 ${issueList(issues[s.id] ?? [])}
@@ -111,10 +97,10 @@ ${issueList(issues[s.id] ?? [])}
 		const P = PLATFORMS[p];
 		h += `<div class="net"><h3><i class="dot" style="background:${P.color}"></i>${P.name}</h3>`;
 		for (const c of campaigns.filter((c) => c.data.platforms.includes(p))) {
-			const obj = (P.objectives[c.data.objective] ?? "").replace(/\*$/, "");
+			const obj = objectiveLabel(c);
 			h += check(`${p}:${c.id}`, `${P.levels[0]} <b>${esc(c.data.name)}</b>, objective <b>${esc(obj)}</b>, ${money(c.data.budget)}`);
 			for (const s of childrenOf(plan, c.id)) {
-				h += `<div class="ind">${check(`${p}:${s.id}`, `${P.levels[1]} <b>${esc(s.data.name)}</b>: ${esc(adsetSummary(s.data))}`)}`;
+				h += `<div class="ind">${check(`${p}:${s.id}`, `${P.levels[1]} <b>${esc(s.data.name)}</b>: ${esc(adsetSummary(s.data, p))}${s.data.optimization ? ` · ${esc(goalLabel(plan, s))}` : ""}`)}`;
 				for (const ad of childrenOf(plan, s.id).filter((a) => a.data.platform === p)) h += `<div class="ind">${check(`${p}:${ad.id}`, `${P.levels[2]} <b>${esc(ad.data.name)}</b> (${esc(P.formats[ad.data.format]?.name ?? ad.data.format)})`)}</div>`;
 				h += `</div>`;
 			}
@@ -133,19 +119,26 @@ const cell = (v) => {
 };
 
 // One row per ad: the build sheet, for CSV and the workbook's Ads sheet.
+// One row per ad with every setting as the network names it: the build sheet, for CSV and the workbook's Ads sheet.
+const TARGET_FACTS = new Set(["Locations", "Languages", "Conversion location", "Performance goal", "Conversion goal", "Age", "Gender", "Placements", "Bid strategy", "Budget"]);
 export function buildSheet(plan) {
-	const cols = ["Network", "Campaign", "Objective (network's name)", "Budget", "Start", "End", "Ad set", "Locations", "Age", "Genders", "Languages", "Interests", "Custom audiences", "Exclusions", "Placements", "Ad", "Format", "Primary text", "Headline", "Headline 2", "Description", "CTA", "URL", "Display URL", "Media", "Status", "Assignee"];
+	const cols = ["Network", "Campaign", "Objective", "Campaign type", "Special ad category", "Campaign budget", "Campaign bid strategy", "Start", "End", "Ad set", "Locations", "Languages", "Conversion location", "Performance goal", "Age", "Gender", "Targeting", "Placements", "Ad set bid strategy", "Ad set budget", "Ad", "Format", "Primary text", "Headlines", "Descriptions", "Paths", "CTA", "URL", "Display URL", "Media", "Status", "Assignee"];
 	const rows = [cols];
 	for (const ad of plan.nodes.filter((n) => n.type === "ad")) {
 		const s = plan.nodes.find((n) => n.id === ad.parent);
 		const c = s && plan.nodes.find((n) => n.id === s.parent);
 		const P = PLATFORMS[ad.data.platform];
-		const a = s?.data ?? {};
 		const d = ad.data;
+		const cf = Object.fromEntries(c ? campaignFacts(c) : []);
+		const sfRows = s && c ? adsetFacts(plan, s) : [];
+		const sf = Object.fromEntries(sfRows);
+		const search = d.format === "search";
 		rows.push([
-			P?.name ?? d.platform, c?.data.name ?? "", (P?.objectives[c?.data.objective] ?? "").replace(/\*$/, " (confirm)"), c ? money(c.data.budget) : "", c?.data.schedule.start ?? "", c?.data.schedule.end ?? "",
-			a.name ?? "", a.locations ?? [], s ? `${a.ageMin}-${a.ageMax}` : "", gender(a.genders), a.languages ?? [], a.interests ?? [], a.customAudiences ?? [], a.exclusions ?? [], a.placements ?? "",
-			d.name, P?.formats[d.format]?.name ?? d.format, d.primaryText, d.headline, d.format === "search" ? d.headline2 : "", d.description, d.cta, d.url, d.displayUrl,
+			P?.name ?? d.platform, c?.data.name ?? "", cf.Objective ?? "", cf["Campaign type"] ?? "", cf["Special ad category"] ?? "", cf.Budget ?? "", cf["Bid strategy"] ?? "", c?.data.schedule.start ?? "", c?.data.schedule.end ?? "",
+			s?.data.name ?? "", sf.Locations ?? cf.Locations ?? "", sf.Languages ?? cf.Languages ?? "", sf["Conversion location"] ?? "", sf["Performance goal"] ?? sf["Conversion goal"] ?? "", sf.Age ?? "", sf.Gender ?? "",
+			sfRows.filter(([k]) => !TARGET_FACTS.has(k)).map(([k, v]) => `${k}: ${v}`), sf.Placements ?? "", sf["Bid strategy"] ?? "", sf.Budget ?? "",
+			d.name, P?.formats[d.format]?.name ?? d.format, search ? "" : d.primaryText, (search ? [d.headline, d.headline2, ...d.extraHeadlines] : [d.headline]).filter(Boolean), (search ? [d.description, ...d.extraDescriptions] : [d.description]).filter(Boolean), search ? [d.path1, d.path2].filter(Boolean).join("/") : "",
+			search ? "" : d.cta, d.url, d.displayUrl,
 			[...d.media, ...d.cards].map((m) => m?.name || (m?.src?.startsWith("data:") ? "embedded" : m?.src)).filter(Boolean), STATUS_LABEL[ad.status], ad.assignee,
 		]);
 	}
@@ -178,19 +171,17 @@ export function workbookSheets(plan) {
 		...bp.stages.map((s) => [s.label, s.weight, bp.monthly ? Math.round(s.monthly) : null, bp.monthly ? Math.round(s.daily) : null, s.adsets, s.ads, camps.filter((c) => c.data.funnel === s.key).length]),
 	];
 	const campaigns = [
-		["Campaign", "Funnel stage", "Objective", "Networks", "Objective to pick in each network", "Budget type", "Amount", "Currency", "Budget level", "Start", "End", "KPI", "Ad sets", "Ads", "Status", "Assignee", "Notes"],
+		["Campaign", "Network", "Funnel stage", "Objective", "Campaign type", "Special ad category", "Daily budget", "Currency", "Budget level", "Bid strategy", "Start", "End", "KPI", "Ad sets", "Ads", "Status", "Assignee", "Notes"],
 		...camps.map((c) => {
 			const d = c.data;
+			const f = Object.fromEntries(campaignFacts(c));
 			const kids = childrenOf(plan, c.id);
-			return [d.name, FUNNEL[d.funnel] ?? "", OBJECTIVES[d.objective], d.platforms.map((p) => PLATFORMS[p].short), d.platforms.map((p) => `${PLATFORMS[p].short}: ${PLATFORMS[p].objectives[d.objective]}`), d.budget.type, Number(d.budget.amount) || null, d.budget.currency, d.budget.level === "adset" ? "Ad set (ABO)" : "Campaign (CBO)", d.schedule.start, d.schedule.end, d.kpi, kids.length, kids.reduce((a, s) => a + childrenOf(plan, s.id).length, 0), STATUS_LABEL[c.status], c.assignee, d.notes];
+			return [d.name, f.Network, FUNNEL[d.funnel] ?? "", f.Objective, f["Campaign type"] ?? "", f["Special ad category"] ?? "", Number(d.budget.amount) || null, d.budget.currency, (f.Budget ?? "").split(" · ")[1] ?? "", f["Bid strategy"] ?? "", d.schedule.start, d.schedule.end, d.kpi, kids.length, kids.reduce((a, s) => a + childrenOf(plan, s.id).length, 0), STATUS_LABEL[c.status], c.assignee, d.notes];
 		}),
 	];
 	const adsets = [
-		["Campaign", "Ad set", "Locations", "Age from", "Age to", "Genders", "Languages", "Interests", "Custom audiences", "Exclusions", "Placements", "Optimize for", "Budget", "Ads", "Status", "Assignee", "Notes"],
-		...sets.map((s) => {
-			const a = s.data;
-			return [name(s.parent), a.name, a.locations, Number(a.ageMin), Number(a.ageMax), gender(a.genders), a.languages, a.interests, a.customAudiences, a.exclusions, a.placements, a.optimization, a.budget ? money(a.budget) : "", childrenOf(plan, s.id).length, STATUS_LABEL[s.status], s.assignee, a.notes];
-		}),
+		["Campaign", "Ad set", "Settings", "Ads", "Status", "Assignee", "Notes"],
+		...sets.map((s) => [name(s.parent), s.data.name, adsetFacts(plan, s).map(([k, v]) => `${k}: ${v}`).join("\n"), childrenOf(plan, s.id).length, STATUS_LABEL[s.status], s.assignee, s.data.notes]),
 	];
 	const sheet = buildSheet(plan);
 	sheet[0].push("Creative by", "Generation prompt", "Creative notes");
@@ -219,12 +210,12 @@ export function renderMarkdown(plan) {
 		const d = c.data;
 		L.push(`## ${TYPES.campaign.label}: ${d.name} (${STATUS_LABEL[c.status]}${c.assignee ? `, @${c.assignee}` : ""})`, "");
 		if (d.funnel) L.push(`- Funnel stage: ${FUNNEL[d.funnel]}`);
-		L.push(`- Objective: ${OBJECTIVES[d.objective]} (${d.platforms.map((p) => `${PLATFORMS[p].short}: ${PLATFORMS[p].objectives[d.objective]}`).join("; ")})`);
-		L.push(`- Budget: ${money(d.budget)}`, `- Schedule: ${d.schedule.start || "on approval"} → ${d.schedule.end || "ongoing"}`);
+		for (const [k, v] of campaignFacts(c)) L.push(`- ${k}: ${v}`);
+		L.push(`- Schedule: ${d.schedule.start || "on approval"} → ${d.schedule.end || "ongoing"}`);
 		if (d.kpi) L.push(`- KPI: ${d.kpi}`);
 		L.push("");
 		for (const s of childrenOf(plan, c.id)) {
-			L.push(`### Ad set: ${s.data.name}`, "", `- Audience: ${adsetSummary(s.data)}`, `- Interests: ${list(s.data.interests)}`, `- Custom: ${list(s.data.customAudiences)} · Exclude: ${list(s.data.exclusions)}`, "");
+			L.push(`### Ad set: ${s.data.name}`, "", ...adsetFacts(plan, s).map(([k, v]) => `- ${k}: ${v}`), "");
 			for (const ad of childrenOf(plan, s.id)) {
 				const d = ad.data;
 				L.push(`- **${d.name}** · ${formatLabel(d.platform, d.format)} · ${STATUS_LABEL[ad.status]}`);

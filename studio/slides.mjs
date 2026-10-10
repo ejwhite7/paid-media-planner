@@ -2,12 +2,13 @@
 // walks the structure top-down: cover, brief and budget, the structure at a glance, then each campaign (objective,
 // budget, its ad sets), each ad set (targeting), its ads as native mockups, open issues, and the build checklist.
 // Pure: returns HTML. tools/canvas.mjs wraps it in a page with the fonts and styles, and prints it to PDF.
-import { FUNNEL, FUNNEL_LABEL, OBJECTIVES, PLATFORMS, STATUS_LABEL, FIELD_LABEL, budgetPlan, childrenOf, issuesByNode, money, suggestedBudget } from "./model.mjs";
+import { FUNNEL, FUNNEL_LABEL, OBJECTIVES, PLATFORMS, STATUS_LABEL, FIELD_LABEL, adsetFacts, adsetSummary, budgetPlan, campaignFacts, channelPlans, childrenOf, goalLabel, issuesByNode, money, objectiveLabel } from "./model.mjs";
 import { esc, formatLabel, renderMock } from "./mocks.mjs";
 
 const chunk = (a, n) => Array.from({ length: Math.ceil(a.length / n) }, (_, i) => a.slice(i * n, i * n + n));
 const list = (a) => (a?.length ? a.map(esc).join(", ") : '<span class="dim">—</span>');
 const gender = (g) => ({ all: "All", male: "Men", female: "Women" })[g] ?? "All";
+const kvRows = (rows) => rows.map(([k, v]) => `<tr><th>${esc(k)}</th><td>${esc(v)}</td></tr>`).join("");
 const pill = (status) => `<span class="st st-${status}">${STATUS_LABEL[status] ?? status}</span>`;
 const funnelTag = (f) => (f ? `<span class="fun fun-${f}">${FUNNEL[f]}</span>` : "");
 const netDots = (ps) => ps.map((p) => `<span class="net"><i style="background:${PLATFORMS[p].color}"></i>${PLATFORMS[p].short}</span>`).join("");
@@ -48,6 +49,7 @@ export function renderSlides(plan) {
 		.map((s) => `<div class="seg fun-${s.key}" style="flex:${s.weight}"><b>${s.label} ${s.weight}%</b><span>${bp.monthly ? `${cur} ${Math.round(s.monthly).toLocaleString()}/mo` : ""}</span></div>`)
 		.join("");
 	const budgetBlock = `<div class="budget"><h3>Budget by funnel stage</h3><div class="bar">${bar}</div>
+		${channelPlans(plan).filter((b) => b.monthly).length ? `<table class="t"><thead><tr><th>Channel</th><th>Monthly</th><th>Daily</th><th>Testable</th></tr></thead><tbody>${channelPlans(plan).filter((b) => b.monthly).map((b) => `<tr><td>${netDots([b.network])}</td><td>${cur} ${b.monthly.toLocaleString()}</td><td>${cur} ${Math.round(b.daily)}</td><td>${b.adsets} ${PLATFORMS[b.network].levels[1].toLowerCase()}s × ~${Math.round(b.ads / Math.max(b.adsets, 1))} ads</td></tr>`).join("")}</tbody></table>` : ""}
 		<table class="t"><thead><tr><th>Stage</th><th>Daily</th><th>Testable</th><th>Campaigns</th></tr></thead><tbody>${bp.stages
 			.map((s) => `<tr><td>${funnelTag(s.key)} <span class="dim">${esc(FUNNEL_LABEL[s.key].split(": ")[1] ?? "")}</span></td><td>${bp.monthly ? `${cur} ${Math.round(s.daily)}` : "—"}</td><td>${s.adsets ? `${s.adsets} ad set${s.adsets > 1 ? "s" : ""} × ${s.ads} ads` : bp.monthly && s.weight ? "Fold into another stage" : "—"}</td><td>${camps.filter((c) => c.data.funnel === s.key).length}</td></tr>`)
 			.join("")}</tbody></table>
@@ -72,7 +74,7 @@ export function renderSlides(plan) {
 			pg
 				.map((c) => {
 					const kids = childrenOf(plan, c.id);
-					return `<div class="tree"><div class="tc"><span class="lvl">Campaign</span><b>${esc(c.data.name)}</b><div class="meta">${funnelTag(c.data.funnel)} ${OBJECTIVES[c.data.objective]} · ${money(c.data.budget)}</div><div>${netDots(c.data.platforms)}</div></div>
+					return `<div class="tree"><div class="tc"><span class="lvl">Campaign</span><b>${esc(c.data.name)}</b><div class="meta">${funnelTag(c.data.funnel)} ${esc(objectiveLabel(c))} · ${money(c.data.budget)}</div><div>${netDots(c.data.platforms)}</div></div>
 					<div class="tk">${kids.map((s) => `<div class="ts"><span class="lvl lvl-as">Ad set</span><b>${esc(s.data.name)}</b><span class="dim">${childrenOf(plan, s.id).length} ads · ${esc(s.data.optimization || "—")}</span></div>`).join("") || '<div class="ts dim">No ad sets yet</div>'}</div></div>`;
 				})
 				.join(""),
@@ -83,25 +85,22 @@ export function renderSlides(plan) {
 	for (const c of camps) {
 		const d = c.data;
 		const kids = childrenOf(plan, c.id);
-		const sug = suggestedBudget(plan, c);
 		// Campaign slide
 		slide(
 			"two campaign",
 			esc(d.name),
 			`<div class="col"><table class="kv">
-				<tr><th>Objective</th><td>${OBJECTIVES[d.objective]}</td></tr>
+				${kvRows(campaignFacts(c))}
 				${d.funnel ? `<tr><th>Funnel stage</th><td>${FUNNEL_LABEL[d.funnel]}</td></tr>` : ""}
-				<tr><th>Pick in ads manager</th><td>${d.platforms.map((p) => `<div>${netDots([p])} ${esc(PLATFORMS[p].objectives[d.objective].replace(/\*$/, ""))}${PLATFORMS[p].objectives[d.objective].endsWith("*") ? ' <span class="warn">closest match</span>' : ""}</div>`).join("") || "—"}</td></tr>
-				<tr><th>Budget</th><td>${money(d.budget)}${d.budget.level === "adset" ? " · set per ad set" : " · campaign budget"}${sug && Number(d.budget.amount) !== sug.amount ? `<div class="dim">Suggested ${sug.currency} ${sug.amount}/day from the funnel weighting</div>` : ""}</td></tr>
 				<tr><th>Schedule</th><td>${esc(d.schedule.start || "On approval")} → ${esc(d.schedule.end || "Ongoing")}</td></tr>
 				${d.kpi ? `<tr><th>KPI</th><td>${esc(d.kpi)}</td></tr>` : ""}
 				<tr><th>Status</th><td>${pill(c.status)}${c.assignee ? ` · ${esc(c.assignee)}` : ""}</td></tr>
 			</table>${d.notes ? `<div class="notes">${esc(d.notes.slice(0, 500))}</div>` : ""}</div>
 			<div class="col"><h3>${kids.length} ad set${kids.length === 1 ? "" : "s"}</h3>${kids
 				.slice(0, 6)
-				.map((s) => `<div class="card"><b>${esc(s.data.name)}</b><div class="dim">${esc([s.data.locations.slice(0, 2).join(", ") || "No locations", `${s.data.ageMin}–${s.data.ageMax}`, gender(s.data.genders)].join(" · "))}</div><div>${esc([s.data.interests.slice(0, 3).join(", "), s.data.customAudiences.slice(0, 2).join(", ")].filter(Boolean).join(" · ") || "Broad")}</div><div class="dim">${childrenOf(plan, s.id).length} ads · optimise for ${esc(s.data.optimization || "—")}</div></div>`)
+				.map((s) => `<div class="card"><b>${esc(s.data.name)}</b><div class="dim">${esc(adsetSummary(s.data, d.platforms[0]))}</div><div>${esc([s.data.interests.slice(0, 3).join(", "), s.data.customAudiences.slice(0, 2).join(", ")].filter(Boolean).join(" · ") || "Broad")}</div><div class="dim">${childrenOf(plan, s.id).length} ads · ${esc(goalLabel(plan, s) || "no goal set")}</div></div>`)
 				.join("")}${kids.length > 6 ? `<p class="dim">+ ${kids.length - 6} more</p>` : ""}</div>`,
-			{ eyebrow: `Campaign · ${esc(OBJECTIVES[d.objective])}`, tag: `<div class="tags">${funnelTag(d.funnel)}${netDots(d.platforms)}</div>` },
+			{ eyebrow: `Campaign · ${esc(objectiveLabel(c))}`, tag: `<div class="tags">${funnelTag(d.funnel)}${netDots(d.platforms)}</div>` },
 		);
 		for (const s of kids) {
 			const a = s.data;
@@ -111,15 +110,7 @@ export function renderSlides(plan) {
 				"two adset",
 				esc(a.name),
 				`<div class="col"><table class="kv">
-					<tr><th>Locations</th><td>${list(a.locations)}</td></tr>
-					<tr><th>Age · gender</th><td>${a.ageMin}–${a.ageMax}${Number(a.ageMax) >= 65 ? "+" : ""} · ${gender(a.genders)}</td></tr>
-					${a.languages.length ? `<tr><th>Languages</th><td>${list(a.languages)}</td></tr>` : ""}
-					<tr><th>Interests</th><td>${list(a.interests)}</td></tr>
-					<tr><th>Custom audiences</th><td>${list(a.customAudiences)}</td></tr>
-					<tr><th>Exclusions</th><td>${list(a.exclusions)}</td></tr>
-					<tr><th>Placements</th><td>${esc(a.placements || "Automatic")}</td></tr>
-					<tr><th>Optimise for</th><td>${esc(a.optimization || "—")}</td></tr>
-					${a.budget ? `<tr><th>Budget</th><td>${money(a.budget)}</td></tr>` : ""}
+					${kvRows(adsetFacts(plan, s))}
 				</table>${a.notes ? `<div class="notes">${esc(a.notes.slice(0, 420))}</div>` : ""}</div>
 				<div class="col"><h3>${sAds.length} ad${sAds.length === 1 ? "" : "s"} testing</h3>${sAds
 					.slice(0, 6)
@@ -173,7 +164,7 @@ export function renderSlides(plan) {
 					const cs = camps.filter((c) => c.data.platforms.includes(p));
 					const nAds = ads.filter((ad) => ad.data.platform === p).length;
 					return `<div class="netcol"><h3>${netDots([p])}</h3><ol>
-						<li>${cs.length} ${P.levels[0].toLowerCase()}${cs.length === 1 ? "" : "s"}: ${[...new Set(cs.map((c) => P.objectives[c.data.objective].replace(/\*$/, "")))].map(esc).join(", ")}</li>
+						<li>${cs.length} ${P.levels[0].toLowerCase()}${cs.length === 1 ? "" : "s"}: ${[...new Set(cs.map((c) => objectiveLabel(c)))].map(esc).join(", ")}</li>
 						<li>${cs.reduce((a, c) => a + childrenOf(plan, c.id).length, 0)} ${P.levels[1].toLowerCase()}${cs.reduce((a, c) => a + childrenOf(plan, c.id).length, 0) === 1 ? "" : "s"} with the targeting above</li>
 						<li>${nAds} ${P.levels[2].toLowerCase()}${nAds === 1 ? "" : "s"}, named as in this deck</li>
 						<li>Pixel or conversion tracking checked, UTMs on every URL</li>

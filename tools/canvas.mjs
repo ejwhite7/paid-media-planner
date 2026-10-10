@@ -235,6 +235,7 @@ function requestContext(r) {
 		r.note ? `The user's note: ${r.note}` : "No note.",
 		budgetSummary(plan),
 		`Naming convention (${plan.settings.naming.auto ? "on: edit data.label, the name is rebuilt on save" : "off"}): campaign "${plan.settings.naming.campaign}", ad set "${plan.settings.naming.adset}", ad "${plan.settings.naming.ad}".`,
+		`Network options (objectives, goals, bid strategies, ages, targeting, placements per network): ${resolve(studio, "platforms.mjs")}. Use only its ids.`,
 		plan.settings.context.length ? `Positioning and messaging context (read before writing copy or creative):\n${plan.settings.context.map((c) => `- ${c.name}: ${contextFile(c.path) ?? c.path}`).join("\n")}` : "No positioning files attached.",
 		`What to do: ${KIND[r.kind][1].replace("TOOLS", tools).replace("ID", plan.id)}`,
 		`Follow the paid-media-planner skill for the plan schema, each network's rules and how to write feedback. Edit the plan JSON directly, keeping the ids and x/y of nodes you don't change, then run \`node "${join(tools, "canvas.mjs")}" validate ${plan.id}\` (and \`layout ${plan.id}\` after adding nodes). The open canvas reloads by itself. Finish with a short summary in chat.`,

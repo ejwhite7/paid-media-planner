@@ -28,13 +28,22 @@ your changes land. Always:
   "nodes": [
     { "id": "cp_x", "type": "campaign", "parent": null, "x": 80, "y": 200, "status": "draft", "assignee": "", "comments": [],
       "data": { "name": "…", "label": "Short human part of the name", "funnel": "tof",       // tof | mof | bof | ""
-                "platforms": ["meta", "tiktok"], "objective": "leads",          // awareness | traffic | engagement | video_views | leads | app | sales
-                "budget": { "type": "daily", "amount": 100, "currency": "USD", "level": "campaign" },   // level: campaign (CBO) | adset (ABO)
+                "platforms": ["meta"],                      // exactly one network per campaign
+                "nativeObjective": "OUTCOME_LEADS",         // that network's objective id (CATALOG); objective (generic) is derived
+                "budget": { "level": "campaign" },          // amount is DERIVED from the channel budget: don't set it
+                "bidStrategy": "COST_CAP", "bidAmount": 40, // only where the network bids at campaign level
+                "special": "NONE",                          // special ad category, where the network has them
+                "campaignType": "", "networks": [], "locations": [], "languages": [],   // Google only: campaign settings
                 "schedule": { "start": "2026-03-01", "end": "" }, "kpi": "CPL < $40", "notes": "" } },
     { "id": "as_x", "type": "adset", "parent": "cp_x", …,
       "data": { "name": "…", "locations": ["Austin, TX +25mi"], "ageMin": 30, "ageMax": 60, "genders": "all",   // all | female | male
                 "languages": [], "interests": ["Lawn care"], "customAudiences": ["Site visitors 30d"], "exclusions": ["Customers"],
-                "placements": "automatic", "optimization": "Leads", "budget": null, "notes": "" } },
+                "ageBuckets": [],                           // networks with age groups (TikTok, LinkedIn, Pinterest, Google)
+                "targeting": { "lookalikes": ["1% purchasers"] },   // the network's other targeting dimensions, by key
+                "placements": "automatic",                  // or a list of the network's placement ids
+                "destination": "Website",                   // conversion location, where the objective has them
+                "optimization": "LEAD_GENERATION",          // the network's goal id for the campaign's objective
+                "bidStrategy": "", "bidAmount": "", "notes": "" } },
     { "id": "ad_x", "type": "ad", "parent": "as_x", …,
       "data": { "name": "…", "platform": "meta", "format": "ig_feed",
                 "primaryText": "…", "headline": "…", "headline2": "", "description": "…", "cta": "Get quote",
@@ -48,7 +57,8 @@ your changes land. Always:
   "feedback": { "at": "ISO time", "summary": "…", "items": [{ "node": "ad_x", "severity": "warn", "text": "…", "suggestion": "…", "resolved": false }] },
   "settings": {
     "naming": { "auto": true, "campaign": "{seq} // {funnel} // {objective} // {label}", "adset": "{seq} // {label}", "ad": "{seq} // {label} // {format}" },
-    "budget": { "monthly": 6000, "currency": "USD", "cpa": 35 },   // the test budget; cpa = expected cost per optimisation event, 0 if unknown
+    "channels": { "meta": { "monthly": 4000, "cpa": 35 }, "google": { "monthly": 2000, "cpa": 0 } },   // budgets per channel
+    "budget": { "currency": "USD" },
     "funnel": { "tof": 60, "mof": 25, "bof": 15 },                   // budget weighting by funnel stage
     "context": [{ "name": "acme-positioning.md", "path": "/context/<plan>/<file>" }]   // positioning and messaging files
   }
@@ -57,7 +67,19 @@ your changes land. Always:
 
 ## Settings
 
-The request block repeats the settings in plain words: the naming convention, what the test budget can carry, and the
+### Network options
+
+Every campaign, ad set and ad setting must be one the network's ads manager offers. `studio/platforms.mjs` (`CATALOG`)
+lists them per network: native objectives with the performance goals and conversion locations under each, bid
+strategies and the level they sit at, budget levels and minimums, special ad categories, how age is targeted (Meta and
+Snapchat: a range; TikTok, LinkedIn, Pinterest and Google: age groups; X: from/to steps; Reddit: no age targeting),
+genders, targeting dimensions and placements. Use its ids, never invented values. LinkedIn's Job applicants objective
+can't target by age, and a special ad category (Meta, TikTok) means age and gender can't be narrowed. For Google, pick
+the campaign type first: it decides the ad formats and bid strategies, and locations and languages go on the campaign.
+Responsive search ads take 3–15 headlines (headline, headline2, extraHeadlines) and 2–4 descriptions. A value marked
+`confirm: true` exists but wasn't verified: say so where it matters.
+
+The request block repeats the settings in plain words: the naming convention, what each channel budget can carry, and the
 absolute paths of the positioning files. They bind every request.
 
 - **Naming.** With `naming.auto` on, `normalize` rebuilds every `name` from the templates on each save, so set
@@ -65,12 +87,16 @@ absolute paths of the positioning files. They bind every request.
   01.02.A in canvas order), `{funnel}`, `{objective}`, `{network}`, `{label}`, `{brand}`, `{date}` (YYYYMM), and for ad
   sets `{geo}` and `{optimization}`, for ads `{letter}`, `{format}` and `{cta}`. With it off, write names that follow the
   templates anyway. `canvas.mjs name <id>` renames everything once.
-- **Test budget.** `budgetPlan(settings)` in `studio/model.mjs` sizes the structure: each ad set needs about 50
-  optimisation events a week (`cpa` × 50 a week) or at least 20 a day, and each ad about 7 a day to be read. A stage that
-  can't fund one ad set gets folded into another. Treat the result as a ceiling. Never build more ad sets or ads than it
-  says. If the user asks for more, build the most important ones first and say what you left out and why.
-- **Funnel weighting.** Give every campaign a `funnel` stage. Its suggested daily budget is the stage's share of the
-  monthly budget split across that stage's campaigns (`suggestedBudget`). Use it unless the note gives budgets. TOF is
+- **Channel budgets.** Budgets are set per channel: `settings.channels[network] = { monthly, cpa }`. Campaign and ad
+  set budgets are derived from them on every save and can't be typed in: a campaign gets its channel's monthly budget ×
+  its funnel stage's weight (among the stages that channel's campaigns use), split evenly across that stage's
+  campaigns, and ABO ad sets split their campaign's. `budgetPlan(settings, network)` sizes each channel: each ad set
+  needs about 50 optimisation events a week (`cpa` × 50) or the network's daily minimum, and each ad about 7 a day to
+  be read. Treat it as a ceiling per channel; if the user asks for more, build the most important first and say what
+  you left out. If the note gives a total budget, set `settings.channels` for the networks you choose and say how you
+  split it.
+- **Funnel weighting.** Give every campaign a `funnel` stage: on a channel where some campaigns have one, a campaign
+  without one gets no budget. TOF is
   prospecting (broad, interests, lookalikes), MOF is engaged audiences and nurture, BOF is retargeting and high intent.
   Each stage excludes the ones below it, and BOF excludes converters.
 - **Positioning files.** These are Markdown from GrowthCast's Positioning Wizard or the marketing-strategy workshop: JTBD
@@ -108,9 +134,9 @@ The request block says which one it is. The user's note, if any, wins over these
 1. Pick the objective from the business outcome, not the vanity metric (leads business → `leads`, ecommerce → `sales`).
 2. Pick networks where the audience actually is, and say why in the campaign `notes`. Don't spread a small budget thin:
    under about $3k/month, one or two networks beat five.
-3. Size the structure to the test budget (see Settings) before anything else. Create one campaign per funnel stage the
-   budget funds (with `funnel` set and the suggested budget), per network group that shares an objective, then only as
-   many ad sets as the budget carries, each differing in one clear variable (prospecting interest stack vs. broad vs. retargeting or lookalike), with exclusions so they don't
+3. Size the structure to each channel's budget (see Settings) before anything else. Create one campaign per network and
+   funnel stage the budget funds (with `funnel` and the network's `nativeObjective`), then only as many ad sets as the
+   channel carries, each with the network's goal id in `optimization`, each differing in one clear variable (prospecting interest stack vs. broad vs. retargeting or lookalike), with exclusions so they don't
    overlap. Retargeting ad sets exclude converters.
 4. Create as many ads per ad set as the budget carries (2–5) that test different angles (pain, outcome, proof, offer),
    not trivially different wording. Mark creator-led ads `"creative": "ugc"`, put the creator brief in their notes, and
@@ -170,7 +196,7 @@ the user it's there. Asked about a plan: `canvas.mjs list`, then read the file.
 
 ## Quality bar
 
-- Names follow the naming convention in the settings, and the structure stays within what the test budget carries.
+- Names follow the naming convention in the settings, and the structure stays within what each channel budget carries.
 - Copy reads like the brand, not like an ad generator: specific nouns, numbers from the brief, no "unlock", "elevate"
   or "game-changer". Never invent claims, prices, reviews or statistics the brief doesn't support. Put a `[confirm: …]`
   marker in the copy where a fact is needed.

@@ -249,8 +249,18 @@ table.stages input { width: 70px; }
 .netswitch small { opacity: .6; font-size: 10.5px; }
 #mocksView { padding-top: 56px; }
 
-/* Reviewers (clients in the portal) read, comment and set statuses: no editing tools. */
+/* Viewers (clients in the portal) read only: no editing, commenting or status tools. */
 body.readonly .edit-only, body.readonly .n-add, body.readonly .port, body.readonly .ins-actions, body.readonly .mk-rm, body.readonly [data-addcard] { display: none !important; }
-body.readonly #planName { pointer-events: none; }
+body.readonly #planName, body.readonly #planStatus { pointer-events: none; }
+body.readonly #commentText, body.readonly [data-comment], body.readonly [data-resolve] { display: none !important; }
 .ask-state.failed { background: color-mix(in srgb, var(--error) 10%, var(--bg)); border: 1px solid var(--error); }
 #emptyHint button { margin-top: 10px; pointer-events: auto; }
+
+/* Network-specific options */
+.cks { display: flex; flex-wrap: wrap; gap: 4px 12px; margin-top: 4px; }
+.ck { display: inline-flex; align-items: center; gap: 5px; font-size: 12.5px; }
+.ck input { width: auto; }
+table.chan input { width: 120px; }
+.chan-h { margin: 14px 0 4px; font-family: var(--mono); font-weight: 500; font-size: 12px; }
+.sug a { font-size: 12px; color: var(--accent-text); }
+.warn { color: var(--warn); }

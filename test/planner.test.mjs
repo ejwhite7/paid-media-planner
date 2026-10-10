@@ -31,7 +31,7 @@ test("lint flags limits, lorem, overlap, and off-network ads", () => {
 	assert.match(text, /Headline is 60 characters/);
 	assert.match(text, /lorem ipsum/);
 	assert.match(text, /Same targeting/);
-	assert.match(text, /Google isn't one of the campaign's networks/);
+	assert.match(text, /Google isn't this campaign's network/);
 	void c;
 });
 
@@ -69,12 +69,16 @@ test("layout puts children right of parents and centres parents", () => {
 });
 
 test("brief, CSV and Markdown include the network's objective and the copy", () => {
-	const p = normalize(newPlan("Spring")).plan;
-	p.nodes[0].data.platforms = ["meta", "tiktok"];
-	p.nodes[0].data.objective = "sales";
-	p.nodes[2].data.headline = "Mow less, live more";
+	const raw = newPlan("Spring");
+	raw.nodes[0].data.platforms = ["tiktok"];
+	raw.nodes[0].data.nativeObjective = "SALES";
+	raw.nodes[2].data.platform = "tiktok";
+	raw.nodes[2].data.format = "infeed";
+	raw.nodes[2].data.primaryText = "Mow less, live more";
+	const p = normalize(raw).plan;
 	const html = renderBrief(p);
-	assert.match(html, /Website conversions/); // TikTok's name for sales
+	assert.match(html, /<th>Objective<\/th><td>Sales<\/td>/); // TikTok's own objective name
+	assert.match(html, /TikTok Ads/);
 	assert.match(html, /data-check=/);
 	assert.match(renderCsv(p), /Mow less, live more/);
 	assert.match(renderMarkdown(p), /# Spring/);
@@ -88,6 +92,7 @@ test("naming convention: tokens, empty tokens drop with their separator, labels 
 	p.nodes[0].data.name = "01 // TOF // Sales // Acquisition";
 	p.nodes[0].data.funnel = "tof";
 	p.nodes[0].data.objective = "sales";
+	p.nodes[0].data.nativeObjective = "OUTCOME_SALES";
 	assert.equal(applyNaming(p), 2);
 	assert.equal(p.nodes[0].data.name, "01 // TOF // Sales // Acquisition", "label read back from a convention-built name");
 	assert.equal(conventionName(p, p.nodes[1]), "01.01 // Ad set 1");
@@ -97,28 +102,86 @@ test("naming convention: tokens, empty tokens drop with their separator, labels 
 	assert.equal(normalize(p).plan.nodes[2].data.name, "01.01.A // Speed // Facebook feed", "normalize renames when auto is on");
 });
 
-test("test budget sizes the structure and the funnel weights suggest campaign budgets", async () => {
-	const { budgetPlan, suggestedBudget } = await import("../studio/model.mjs");
-	const big = budgetPlan({ budget: { monthly: 6000 }, funnel: { tof: 60, mof: 25, bof: 15 } });
+test("channel budgets size the structure per channel and derive campaign and ad set budgets", async () => {
+	const { budgetPlan, derivedBudget } = await import("../studio/model.mjs");
+	const big = budgetPlan({ channels: { meta: { monthly: 6000 } }, funnel: { tof: 60, mof: 25, bof: 15 } }, "meta");
 	assert.equal(big.campaigns, 3);
 	assert.ok(big.adsets >= 3 && big.adsets <= 12);
-	assert.ok(big.stages.every((s) => s.ads >= 2 && s.ads <= 5));
-	const small = budgetPlan({ budget: { monthly: 1500 }, funnel: { tof: 60, mof: 25, bof: 15 } });
-	assert.equal(small.campaigns, 1, "a small budget funds one stage");
+	const small = budgetPlan({ channels: { meta: { monthly: 1500 } }, funnel: { tof: 60, mof: 25, bof: 15 } }, "meta");
+	assert.equal(small.campaigns, 1, "a small channel budget funds one stage");
 	assert.match(small.notes.join(" "), /fold it into TOF/);
-	const pricey = budgetPlan({ budget: { monthly: 3000, cpa: 200 } });
-	assert.equal(pricey.adsets, 1);
-	assert.match(pricey.notes.join(" "), /cheaper event/);
+	assert.equal(budgetPlan({ channels: { meta: { monthly: 3000, cpa: 200 } } }, "meta").adsets, 1);
+	assert.equal(budgetPlan({ channels: { snapchat: { monthly: 3000 } } }, "snapchat").perAdsetDaily, 20, "the network minimum or the testing floor, whichever is higher");
 
-	const p = normalize(newPlan()).plan;
-	p.settings.budget.monthly = 6000;
-	p.nodes[0].data.funnel = "tof";
-	const sug = suggestedBudget(p, p.nodes[0]);
-	assert.equal(sug.amount, Math.round((6000 * 0.6 * 12) / 365));
-	p.nodes[0].data.budget.amount = 10;
-	assert.match(lint(p).map((i) => i.text).join("\n"), /suggests USD 118\/day/);
+	const raw = newPlan();
+	raw.settings.channels = { meta: { monthly: 6000 } };
+	const tof = raw.nodes[0];
+	tof.data.funnel = "tof";
+	const bof = newNode("campaign", { data: { name: "Retarget", funnel: "bof" } });
+	raw.nodes.push(bof, newNode("adset", { parent: bof.id }), newNode("adset", { parent: bof.id }));
+	bof.data.budget = { level: "adset" };
+	const p = normalize(raw).plan;
+	const daily = (6000 * 12) / 365;
+	assert.equal(p.nodes[0].data.budget.amount, Math.round((daily * 60) / 75), "TOF and BOF share the channel 60:15");
+	const b = p.nodes.find((n) => n.id === bof.id);
+	assert.equal(b.data.budget.amount, Math.round((daily * 15) / 75));
+	assert.ok(p.nodes.filter((n) => n.parent === bof.id).every((a) => a.data.budget.amount === Math.round(b.data.budget.amount / 2)), "ABO: the campaign budget splits across its ad sets");
+	assert.equal(derivedBudget(p, p.nodes[0]).network, "meta");
+	p.nodes[0].data.budget.amount = 1;
+	assert.equal(normalize(p).plan.nodes[0].data.budget.amount, Math.round((daily * 60) / 75), "budgets are derived, not typed");
+	const old = newPlan();
+	old.settings.budget.monthly = 3000;
+	assert.deepEqual(normalize(old).plan.settings.channels, { meta: { monthly: 3000, cpa: 0 } }, "a single old test budget becomes the channel budget");
 	for (let i = 0; i < 12; i++) p.nodes.push(newNode("adset", { parent: p.nodes[0].id }));
-	assert.match(lint(normalize(p).plan).map((i) => i.text).join("\n"), /13 ad sets on USD 6,000\/month/);
+	assert.match(lint(normalize(p).plan).map((i) => i.text).join("\n"), /Meta ad sets on USD 6,000\/month/);
+});
+
+test("a campaign runs on one network: older multi-network campaigns split, with that network's ads", () => {
+	const raw = newPlan();
+	const [c, s] = raw.nodes;
+	c.data.platforms = ["meta", "tiktok"];
+	c.data.objective = "sales";
+	delete c.data.nativeObjective; // an older plan: generic objective only
+	raw.nodes.push(newNode("ad", { parent: s.id, platform: "tiktok" }));
+	const p = normalize(raw).plan;
+	const tt = p.nodes.find((n) => n.id === `${c.id}-tiktok`);
+	assert.deepEqual(tt.data.platforms, ["tiktok"]);
+	assert.equal(tt.data.nativeObjective, "SALES");
+	const ttSet = p.nodes.find((n) => n.parent === tt.id);
+	assert.equal(p.nodes.find((n) => n.parent === ttSet.id).data.platform, "tiktok");
+	assert.deepEqual(p.nodes[0].data.platforms, ["meta"]);
+	assert.equal(p.nodes[0].data.nativeObjective, "OUTCOME_SALES");
+	assert.equal(normalize(p).plan.nodes.length, p.nodes.length, "splitting is stable");
+});
+
+test("settings are checked against what each network offers", async () => {
+	const { CATALOG } = await import("../studio/model.mjs");
+	const mk = (net, campaign = {}, adset = {}) => {
+		const raw = newPlan();
+		raw.settings.channels = { [net]: { monthly: 3000 } };
+		Object.assign(raw.nodes[0].data, { platforms: [net], ...campaign });
+		Object.assign(raw.nodes[1].data, adset);
+		raw.nodes[2].data.platform = net;
+		raw.nodes[2].data.format = Object.keys(PLATFORMS[net].formats)[0];
+		return lint(normalize(raw).plan).map((i) => i.text).join("\n");
+	};
+	assert.match(mk("meta", { nativeObjective: "OUTCOME_SALES" }, { optimization: "THRUPLAY" }), /isn't a Meta goal for Sales/);
+	assert.doesNotMatch(mk("meta", { nativeObjective: "OUTCOME_SALES" }, { optimization: "OFFSITE_CONVERSIONS" }), /performance goal|isn't a Meta goal/);
+	assert.match(mk("meta", { special: "HOUSING" }, { ageMin: 25 }), /Special ad category \(Housing\): age and gender can't be narrowed/);
+	assert.match(mk("tiktok", {}, { ageBuckets: ["AGE_30_40"] }), /TikTok has no age group AGE_30_40/);
+	assert.doesNotMatch(mk("meta", { nativeObjective: "OUTCOME_SALES" }, { optimization: "Purchase" }), /performance goal|isn't a Meta goal/, "old free-text goals map to the network's goal");
+	assert.match(mk("reddit", {}, { ageMin: 25 }), /Reddit doesn't target by age/);
+	assert.match(mk("meta", {}, { placements: ["facebook:feed", "tiktok:feed"] }), /Meta has no placement tiktok:feed/);
+	assert.match(mk("linkedin", { nativeObjective: "JOB_APPLICANT" }, { ageBuckets: ["AGE_25_34"] }), /doesn't allow age targeting for job applicant/);
+	assert.match(mk("google", { campaignType: "VIDEO", locations: ["US"] }), /A Video campaign can't run Search/);
+	assert.match(mk("google", { campaignType: "SEARCH" }), /Google sets locations on the campaign/);
+	const snap = mk("snapchat", { nativeObjective: "AWARENESS_AND_ENGAGEMENT" }, {});
+	assert.match(snap, /Pick a performance goal: Impressions, Swipe ups/);
+	assert.doesNotMatch(snap, /ages run|call-to-action/, "defaults fit the network: 18-50+, a Snapchat CTA");
+	for (const [net, c] of Object.entries(CATALOG)) {
+		assert.ok(c.objectives.length && c.objectives.every((o) => o.generic in { awareness: 1, traffic: 1, engagement: 1, video_views: 1, leads: 1, app: 1, sales: 1 }), `${net} objectives map to generic ones`);
+		assert.ok(c.bid.strategies.length && Object.keys(c.budget.levels).length && c.genders.length && c.sources.length, `${net} catalog complete`);
+	}
 });
 
 test("funnel stage and UGC are inferred for older plans, and UGC keeps its placeholder", () => {
@@ -135,18 +198,18 @@ test("funnel stage and UGC are inferred for older plans, and UGC keeps its place
 
 test("each network gets its own canvas: positions are kept per network and exports can be scoped", async () => {
 	const { inView, viewPlan, planNetworks } = await import("../studio/model.mjs");
-	const p = normalize(newPlan()).plan;
-	const [c, s] = p.nodes;
-	c.data.platforms = ["meta", "tiktok"];
-	p.nodes.push(newNode("ad", { parent: s.id, platform: "tiktok" }));
-	p.nodes.at(-1).views = { tiktok: { x: 5, y: 6 }, nope: { x: 1, y: 1 } };
-	const { plan } = normalize(p);
-	assert.deepEqual(plan.nodes.at(-1).views, { tiktok: { x: 5, y: 6 } });
+	const raw = newPlan();
+	const tt = newNode("campaign", { platform: "tiktok", data: { platforms: ["tiktok"] } });
+	const ttSet = newNode("adset", { parent: tt.id });
+	const ttAd = newNode("ad", { parent: ttSet.id, platform: "tiktok" });
+	ttAd.views = { tiktok: { x: 5, y: 6 }, nope: { x: 1, y: 1 } };
+	raw.nodes.push(tt, ttSet, ttAd);
+	const { plan } = normalize(raw);
+	assert.deepEqual(plan.nodes.find((n) => n.id === ttAd.id).views, { tiktok: { x: 5, y: 6 } });
 	assert.deepEqual(planNetworks(plan), ["meta", "tiktok"]);
-	assert.deepEqual(plan.nodes.filter((n) => inView(plan, n, "tiktok")).map((n) => n.type), ["campaign", "adset", "ad"]);
-	const tt = viewPlan(plan, "tiktok");
-	assert.deepEqual(tt.nodes[0].data.platforms, ["tiktok"]);
-	assert.equal(tt.nodes.filter((n) => n.type === "ad").length, 1);
+	assert.deepEqual(plan.nodes.filter((n) => inView(plan, n, "tiktok")).map((n) => n.id), [tt.id, ttSet.id, ttAd.id]);
+	const v = viewPlan(plan, "tiktok");
+	assert.equal(v.nodes.length, 3);
 	assert.equal(viewPlan(plan, ""), plan);
 });
 
