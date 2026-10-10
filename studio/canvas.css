@@ -264,3 +264,11 @@ table.chan input { width: 120px; }
 .chan-h { margin: 14px 0 4px; font-family: var(--mono); font-weight: 500; font-size: 12px; }
 .sug a { font-size: 12px; color: var(--accent-text); }
 .warn { color: var(--warn); }
+
+/* Inside the GrowthCast portal the portal carries the brand: no wordmark, and the bar shrinks instead of clipping. */
+body.web .top .logo { display: none; }
+.top > * { flex-shrink: 0; }
+.top #planSel { flex-shrink: 1; min-width: 120px; max-width: 260px; }
+.top #planName { flex-shrink: 1; min-width: 90px; }
+.top .grow { flex-shrink: 1; min-width: 0; }
+@media (max-width: 1100px) { .top #planStatus { width: 130px; } .views button { padding: 6px 10px; } }
