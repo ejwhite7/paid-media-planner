@@ -1,0 +1,17 @@
+---
+description: Export a campaign plan as a hand-off pack (HTML brief with native mocks, CSV build sheet, Markdown) and publish a private link
+argument-hint: "[plan id or name]"
+---
+
+Share a paid media planner plan.
+
+1. Find the plan: `node "${CLAUDE_PLUGIN_ROOT}/tools/canvas.mjs" list`. Use the one `$ARGUMENTS` names, otherwise the
+   most recently updated; if several are plausible, ask which one.
+2. Validate it with `canvas.mjs validate <id>`. If there are blocker checks (severity `error`), list them and ask whether
+   to share anyway.
+3. Export: `node "${CLAUDE_PLUGIN_ROOT}/tools/canvas.mjs" export <id>`. It writes `plan.html` (self-contained: brief,
+   each network's objective, targeting, copy, native mocks, build checklist), `build-sheet.csv` and `plan.md`.
+4. Read `plan.html`, then publish it as a private claude.ai Artifact (load the artifact-design skill first; keep the page
+   as exported apart from what that skill requires). Give the user the link and say that it's private until they share it.
+5. Mention the CSV and Markdown paths for whoever builds the campaigns, and that the build checklist in the page keeps
+   its ticks in each viewer's own browser.

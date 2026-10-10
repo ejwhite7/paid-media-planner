@@ -1,0 +1,17 @@
+{
+	"name": "paid-media-planner",
+	"version": "1.0.0",
+	"private": true,
+	"type": "module",
+	"description": "Paid Media Campaign Planner by GrowthCast: a Claude Code plugin for planning, mocking, reviewing and handing off paid media campaigns.",
+	"scripts": {
+		"start": "node tools/canvas.mjs --open",
+		"test": "node --test test/*.test.mjs"
+	},
+	"engines": {
+		"node": ">=20"
+	},
+	"license": "MIT",
+	"author": "GrowthCast (https://growthcast.app)",
+	"repository": "github:ejwhite7/paid-media-planner"
+}

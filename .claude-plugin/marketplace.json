@@ -1,0 +1,13 @@
+{
+	"name": "growthcast",
+	"description": "GrowthCast plugins for Claude Code: GTM and growth tooling.",
+	"owner": { "name": "GrowthCast", "url": "https://growthcast.app" },
+	"plugins": [
+		{
+			"name": "paid-media-planner",
+			"source": "./",
+			"description": "Paid Media Campaign Planner by GrowthCast: plan, mock, review and hand off paid media campaigns across eight ad networks.",
+			"category": "marketing"
+		}
+	]
+}

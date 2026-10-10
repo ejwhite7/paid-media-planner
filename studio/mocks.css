@@ -1,0 +1,135 @@
+/* Native ad mockups (mocks.mjs). Always light, like the apps' default themes, whatever the canvas theme. */
+.mk-wrap { width: 100%; max-width: 380px; font: 14px/1.35 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; color: #1c1e21; color-scheme: light; }
+.mk { position: relative; background: #fff; border-radius: 10px; overflow: hidden; box-shadow: 0 0 0 1px rgba(0,0,0,.08), 0 6px 20px rgba(0,0,0,.08); }
+.mk b { font-weight: 600; }
+.mk small { font-size: 12px; color: #65676b; display: block; }
+.mk-row { display: flex; align-items: center; gap: 8px; }
+.mk-grow { flex: 1; min-width: 0; }
+.mk-pad { padding: 10px 12px; }
+.mk-pad-s { padding: 8px 10px; }
+.mk-dim { color: #65676b; }
+.mk-who { display: flex; flex-direction: column; line-height: 1.2; min-width: 0; }
+.mk-who small { display: flex; align-items: center; gap: 3px; }
+.mk-body { white-space: pre-wrap; word-break: break-word; }
+.mk-up { text-transform: uppercase; letter-spacing: .02em; }
+.mk-av { display: inline-grid; place-items: center; border-radius: 50%; color: #fff; font-weight: 700; flex: none; object-fit: cover; }
+.mk-btn { flex: none; border-radius: 6px; padding: 7px 12px; font-weight: 600; font-size: 13px; white-space: nowrap; }
+.mk-btn-grey { background: #e4e6eb; color: #050505; }
+.mk-btn-blue { background: #1a73e8; color: #fff; }
+.mk-btn-outline { border: 1.5px solid #0a66c2; color: #0a66c2; border-radius: 99px; }
+.mk-btn-rd { background: #0045ac; color: #fff; border-radius: 99px; }
+.mk-round { border-radius: 99px; }
+.mk-pill { background: #fff; color: #111; border-radius: 99px; padding: 8px 18px; font-weight: 600; font-size: 13px; }
+
+/* Media slot: an image, a video, or a placeholder block of the format's shape */
+.mk-media { position: relative; width: 100%; background: #e9ebee; overflow: hidden; }
+.mk-media img, .mk-media video { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; display: block; }
+.mk-ph { display: grid; place-items: center; text-align: center; color: #6b7280; background-color: #eef0f3;
+	background-image: repeating-linear-gradient(135deg, rgba(0,0,0,.035) 0 12px, transparent 12px 24px); }
+.mk-ph b { display: block; font-size: 13px; color: #4b5563; }
+.mk-ph small { font-size: 11px; color: #6b7280; }
+.mk-media[data-media] { cursor: pointer; }
+.mk-media[data-media].drag-over { outline: 3px solid #5b5bd6; outline-offset: -3px; }
+.mk-rm { position: absolute; top: 6px; right: 6px; width: 24px; height: 24px; border-radius: 50%; border: 0; background: rgba(0,0,0,.6); color: #fff; cursor: pointer; opacity: 0; transition: opacity .15s; }
+.mk-media:hover .mk-rm { opacity: 1; }
+
+/* Editable text */
+.ed { outline: none; border-radius: 3px; white-space: pre-wrap; }
+.ed:hover { box-shadow: 0 0 0 1px rgba(91,91,214,.5); background: rgba(91,91,214,.06); }
+.ed:focus { box-shadow: 0 0 0 2px #5b5bd6; background: rgba(91,91,214,.08); }
+
+/* Carousels */
+.mk-carousel { display: flex; gap: 8px; overflow-x: auto; padding: 0 12px 10px; scroll-snap-type: x mandatory; }
+.mk-card { flex: 0 0 72%; border: 1px solid #dddfe2; border-radius: 8px; overflow: hidden; scroll-snap-align: start; }
+.mk-card-foot { display: flex; align-items: center; gap: 6px; padding: 8px; background: #f7f8fa; }
+.mk-addcard { flex: 0 0 64px; border: 1.5px dashed #c0c4cc; border-radius: 8px; background: none; color: #555; cursor: pointer; font: inherit; }
+
+/* Facebook */
+.mk-fb-link { display: flex; align-items: center; gap: 10px; padding: 10px 12px; background: #f0f2f5; }
+.mk-fb-link b { display: block; font-size: 15px; }
+.mk-fb-actions, .mk-li-actions { display: flex; justify-content: space-around; padding: 6px 4px; border-top: 1px solid #e4e6eb; color: #65676b; font-weight: 600; font-size: 13px; }
+.mk-fb-actions span, .mk-li-actions span { display: flex; align-items: center; gap: 5px; }
+
+/* Instagram */
+.mk-ig { border-radius: 4px; }
+.mk-ig .mk-who small { color: #262626; font-size: 11px; }
+.mk-ig-cta { display: flex; justify-content: space-between; align-items: center; padding: 10px 12px; background: #3897f0; color: #fff; font-weight: 600; }
+.mk-ig-icons { gap: 14px; }
+
+/* Stories, Reels, TikTok and Snap: full-bleed vertical frames */
+.mk-story, .mk-tt, .mk-snap { background: #111; color: #fff; border-radius: 14px; max-height: 620px; }
+.mk-story .mk-media, .mk-tt .mk-media, .mk-snap .mk-media { max-height: 620px; }
+.mk-story .mk-ph, .mk-tt .mk-ph, .mk-snap .mk-ph { background-color: #26262c; background-image: repeating-linear-gradient(135deg, rgba(255,255,255,.04) 0 12px, transparent 12px 24px); }
+.mk-story .mk-ph b, .mk-tt .mk-ph b, .mk-snap .mk-ph b { color: #d4d4dc; }
+.mk-story .mk-ph small, .mk-tt .mk-ph small, .mk-snap .mk-ph small { color: #9a9aa6; }
+.mk-story small, .mk-tt small, .mk-snap small { color: rgba(255,255,255,.85); }
+.mk-story-top { position: absolute; inset: 0 0 auto; padding: 8px 10px; background: linear-gradient(rgba(0,0,0,.45), transparent); }
+.mk-bars { display: flex; gap: 3px; margin-bottom: 8px; }
+.mk-bars i { flex: 1; height: 2px; border-radius: 2px; background: rgba(255,255,255,.45); }
+.mk-bars i:first-child { background: #fff; }
+.mk-story-cap { position: absolute; left: 14px; right: 14px; bottom: 96px; font-size: 20px; font-weight: 700; text-shadow: 0 1px 8px rgba(0,0,0,.5); }
+.mk-story-cta, .mk-snap-cta { position: absolute; left: 0; right: 0; bottom: 18px; display: flex; flex-direction: column; align-items: center; gap: 2px; }
+.mk-up-chev { color: #fff; }
+.mk-tt-top { position: absolute; top: 10px; left: 0; right: 0; display: flex; justify-content: center; gap: 16px; font-size: 14px; color: rgba(255,255,255,.7); }
+.mk-tt-top b { color: #fff; border-bottom: 2px solid #fff; padding-bottom: 3px; }
+.mk-tt-rail { position: absolute; right: 8px; bottom: 120px; display: flex; flex-direction: column; align-items: center; gap: 14px; }
+.mk-tt-rail span { display: flex; flex-direction: column; align-items: center; }
+.mk-tt-rail small { font-size: 11px; font-weight: 600; }
+.mk-tt-av { position: relative; margin-bottom: 6px; }
+.mk-tt-av .mk-av { border: 1.5px solid #fff; }
+.mk-tt-av i { position: absolute; left: 50%; bottom: -8px; transform: translateX(-50%); width: 18px; height: 18px; border-radius: 50%; background: #fe2c55; display: grid; place-items: center; font-style: normal; font-weight: 700; font-size: 13px; }
+.mk-tt-cap { position: absolute; left: 12px; right: 64px; bottom: 12px; text-shadow: 0 1px 4px rgba(0,0,0,.5); display: flex; flex-direction: column; gap: 4px; }
+.mk-tt-tag { display: inline-block !important; width: max-content; background: rgba(255,255,255,.2); border-radius: 3px; padding: 1px 5px; }
+.mk-tt-cap small { display: flex; align-items: center; gap: 4px; }
+.mk-tt-cta { display: flex; justify-content: space-between; align-items: center; margin-top: 4px; padding: 9px 12px; border-radius: 4px; background: #fe2c55; font-weight: 600; text-shadow: none; }
+.mk-snap-top { position: absolute; top: 10px; left: 10px; display: flex; align-items: center; gap: 8px; text-shadow: 0 1px 4px rgba(0,0,0,.5); }
+.mk-snap-head { position: absolute; left: 14px; right: 14px; bottom: 90px; font-weight: 700; font-size: 18px; text-shadow: 0 1px 6px rgba(0,0,0,.6); }
+.mk-pill-snap { background: #fffc00; color: #000; }
+
+/* Google */
+.mk-gsearch { padding: 14px 16px; font-family: Arial, sans-serif; }
+.mk-sponsored { font-size: 13px; display: block; margin-bottom: 8px; }
+.mk-gsearch .mk-who span { font-size: 14px; }
+.mk-gsearch .mk-who small { color: #4d5156; }
+.mk-gs-h { color: #1a0dab; font-size: 20px; line-height: 1.3; margin-top: 6px; }
+.mk-gs-d { color: #4d5156; font-size: 14px; margin-top: 3px; }
+.mk-gdisp { font-family: Arial, sans-serif; }
+.mk-gd-h { font-size: 17px; display: block; }
+.mk-gd-d { color: #5f6368; margin-top: 4px; }
+.mk-gd-foot { margin-top: 10px; font-size: 13px; color: #5f6368; }
+.mk-adchoice { position: absolute; top: 0; right: 0; background: rgba(255,255,255,.9); color: #1a73e8; font-size: 10px; padding: 1px 4px; border-bottom-left-radius: 4px; }
+.mk-yt { font-family: Roboto, Arial, sans-serif; }
+.mk-yt-frame { position: relative; background: #000; }
+.mk-yt-ad { position: absolute; left: 8px; bottom: 12px; background: rgba(0,0,0,.6); color: #fff; font-size: 11px; padding: 3px 6px; border-radius: 3px; }
+.mk-yt-skip { position: absolute; right: 0; bottom: 12px; background: rgba(0,0,0,.7); color: #fff; font-size: 13px; padding: 8px 12px; border: 1px solid rgba(255,255,255,.3); border-right: 0; }
+.mk-yt-bar { position: absolute; left: 0; right: 0; bottom: 0; height: 3px; background: rgba(255,255,255,.3); }
+.mk-yt-bar i { display: block; width: 22%; height: 100%; background: #fc0; }
+
+/* LinkedIn */
+.mk-li .mk-who small { font-size: 11px; line-height: 1.3; }
+.mk-li-link { display: flex; align-items: center; gap: 10px; padding: 10px 12px; background: #eef3f8; }
+
+/* Reddit */
+.mk-rd { font-family: "IBM Plex Sans", -apple-system, sans-serif; }
+.mk-rd-title { font-size: 17px; font-weight: 600; white-space: pre-wrap; }
+.mk-rd .mk-media { border-radius: 12px; margin: 0 10px; width: calc(100% - 20px); }
+.mk-rd-link { display: flex; align-items: center; gap: 8px; margin: 8px 10px 0; padding: 8px 10px; border-radius: 10px; background: #eaedef; font-size: 13px; color: #576f76; }
+.mk-rd-actions { display: flex; gap: 8px; padding: 8px 10px; font-size: 12px; font-weight: 600; color: #333; }
+.mk-rd-actions span { display: flex; align-items: center; gap: 4px; background: #eaedef; border-radius: 99px; padding: 4px 10px; }
+
+/* X */
+.mk-x { display: flex; gap: 10px; padding: 12px; font-family: -apple-system, "Segoe UI", sans-serif; color: #0f1419; }
+.mk-x .mk-row { gap: 5px; }
+.mk-x-card { position: relative; margin: 10px 0 4px; border: 1px solid #cfd9de; border-radius: 16px; overflow: hidden; }
+.mk-x-site { position: absolute; left: 10px; bottom: 10px; max-width: calc(100% - 20px); background: rgba(0,0,0,.7); color: #fff; font-size: 13px; padding: 2px 6px; border-radius: 4px; }
+.mk-x-actions { display: flex; justify-content: space-between; color: #536471; font-size: 13px; margin-top: 10px; max-width: 300px; }
+.mk-x-actions span { display: flex; align-items: center; gap: 4px; }
+.mk-x-ad { margin-top: 6px; }
+
+/* Pinterest */
+.mk-pin { background: transparent; box-shadow: none; overflow: visible; max-width: 260px; }
+.mk-pin-img { position: relative; border-radius: 16px; overflow: hidden; }
+.mk-pin-save { position: absolute; top: 10px; right: 10px; background: #e60023; color: #fff; font-weight: 700; border-radius: 99px; padding: 9px 14px; font-size: 14px; }
+.mk-pin-title { font-weight: 600; margin: 8px 4px 4px; font-size: 14px; }
+.mk-pin-by { padding: 0 4px; font-size: 12px; }
+.mk-pin-desc { padding: 4px; font-size: 12px; }
