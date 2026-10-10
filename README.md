@@ -31,7 +31,8 @@ Then run `/paid-media-planner:open`, optionally followed by what the campaign is
 | **Inspector** | Edit the selected node. Campaigns show the objective name to pick in each network's ads manager. Ads open on their **Mock** tab: rewrite any text in place, drop creative on the grey block, switch format, and watch the character limits. **Review** has status, assignee, comments and feedback. |
 | **Mocks** | Every ad in its native format, editable in place. Tick “every format” to see each ad in every format its campaign runs, and pick one with **Use**. |
 | **Brief** | The hand-off view: objectives per network, targeting, copy with character counts, mocks, open issues, and a build checklist per network. |
-| **Ask Claude** | Build from prompt, Review plan, Improve selection, Write copy. The request is queued and goes to Claude with your next message in Claude Code (“go” is enough). Claude edits the plan and the canvas reloads by itself. Claude's notes show as ✦ badges on nodes. |
+| **Settings** | One naming convention for campaign → ad set → ad (tokens such as `{seq}`, `{funnel}`, `{label}`, `{format}`), kept on every save if you switch it on. A monthly test budget that sizes the structure to what it can actually test: how many campaigns, ad sets and ads each get enough spend to leave learning. TOF / MOF / BOF weighting (60 / 25 / 15 by default) that suggests each campaign's daily budget. Positioning and messaging files from GrowthCast's Positioning Wizard or marketing-strategy workshop, which Claude grounds copy and creative in. |
+| **Ask Claude** | Build from prompt, Review plan, Improve selection, Write copy, Design creative. The request is queued and goes to Claude with your next message in Claude Code (“go” is enough). Claude edits the plan and the canvas reloads by itself. Claude's notes show as ✦ badges on nodes. **Design creative** has Claude make the produced ads' images and video with whatever this Claude session can use (image and video generation tools you've set up, p5.js, Blender), at each format's size. Ads marked as creator (UGC) keep their placeholder and get a creator brief. |
 | **Share** | Download the hand-off pack (one self-contained HTML file), the CSV build sheet (one row per ad) or Markdown, or have Claude publish the pack as a private claude.ai link (`/paid-media-planner:share`). |
 
 The instant checks flag missing pieces, text over each network's limit, leftover lorem ipsum, ad sets with the same
@@ -45,7 +46,7 @@ studio/          The browser app, plus modules shared with the server:
   mocks.mjs/.css   native ad mockups (one renderer for canvas, gallery and export)
   brief.mjs/.css   hand-off brief, CSV and Markdown
   app.js, canvas.css, index.html
-tools/canvas.mjs         local server (127.0.0.1:4720) and CLI: list, new, path, validate, layout, export
+tools/canvas.mjs         local server (127.0.0.1:4720) and CLI: list, new, path, validate, layout, export, name, attach, context
 tools/canvas-context.mjs UserPromptSubmit hook: hands a queued canvas request to Claude, once
 skills/paid-media-planner   how Claude builds, reviews and edits plans
 commands/                /paid-media-planner:open, /paid-media-planner:share
@@ -72,13 +73,15 @@ Everything stays on your machine unless you choose to share it.
   `127.0.0.1:4720` only and refuses requests addressed to any other host. It has no dependencies and makes no outbound
   requests.
 - **Local files.** Plans are JSON files in `~/.paid-media-planner/plans/`. Images and video you add go in
-  `~/.paid-media-planner/assets/`. A request queued from the canvas is written to `~/.paid-media-planner/request.json`.
+  `~/.paid-media-planner/assets/`, and positioning files in `~/.paid-media-planner/context/`. A request queued from the canvas is written to `~/.paid-media-planner/request.json`.
   Exports go to `~/.paid-media-planner/exports/` unless you choose another folder.
 - **One hook.** On `UserPromptSubmit`, `tools/canvas-context.mjs` reads `request.json`. If a request is waiting, it adds
   that request to the message you're sending, once, and marks it delivered. It never blocks a message, and it sends
   nothing anywhere else.
 - **Fonts in exported packs.** The exported HTML loads Manrope and DM Mono from Google Fonts when someone opens it. The
   canvas itself uses copies bundled with the plugin.
+- **No credentials.** The plugin never asks for or stores API keys. Design creative uses only the tools you have
+  already set up in your Claude session, and generated files are attached to the plan locally.
 - **Sharing is opt-in.** A private claude.ai link is created only when you run `/paid-media-planner:share` or press
   **Ask Claude** in the Share dialog, and only after you've reviewed the plan.
 

@@ -1,7 +1,7 @@
 // The hand-off brief: what a reviewer approves and what the person building it in each ads manager follows. One
 // renderer for the canvas's Brief view and the exported pack, plus CSV (a build sheet, one row per ad per network) and
 // Markdown (for Slack, email or a doc).
-import { OBJECTIVES, PLATFORMS, STATUS_LABEL, TYPES, FIELD_LABEL, adsetSummary, childrenOf, issuesByNode, money } from "./model.mjs";
+import { FUNNEL, OBJECTIVES, PLATFORMS, STATUS_LABEL, TYPES, FIELD_LABEL, adsetSummary, budgetSummary, childrenOf, issuesByNode, money } from "./model.mjs";
 import { esc, formatLabel, renderMock } from "./mocks.mjs";
 
 const list = (a) => (a?.length ? a.join(", ") : "—");
@@ -51,6 +51,7 @@ export function renderBrief(plan, { interactive = false } = {}) {
 	<div class="${blockers ? "bad" : ""}"><b>${blockers}</b><span>blocker${blockers === 1 ? "" : "s"}</span></div>
 </section>`;
 	if (plan.brief) h += `<section><h2>Brief</h2><p class="pre">${esc(plan.brief)}</p></section>`;
+	if (plan.settings?.budget.monthly) h += `<section><h2>Test budget</h2><p class="pre">${esc(budgetSummary(plan))}</p></section>`;
 	if (fb.summary || issues.plan?.length)
 		h += `<section class="review"><h2>Review${fb.at ? ` <small>Claude · ${new Date(fb.at).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" })}</small>` : ""}</h2>${fb.summary ? `<p class="pre">${esc(fb.summary)}</p>` : ""}${issueList(issues.plan ?? [])}</section>`;
 
@@ -60,6 +61,7 @@ export function renderBrief(plan, { interactive = false } = {}) {
 <h2><span class="lvl lvl-campaign">Campaign</span> ${esc(d.name)} ${pill(c.status)} ${who(c)}</h2>
 <table class="kv">
 	<tr><th>Objective</th><td>${OBJECTIVES[d.objective] ?? d.objective}</td></tr>
+	${d.funnel ? `<tr><th>Funnel stage</th><td>${FUNNEL[d.funnel]}</td></tr>` : ""}
 	<tr><th>Budget</th><td>${money(d.budget)}${d.budget.level === "adset" ? " (set per ad set)" : ""}</td></tr>
 	<tr><th>Schedule</th><td>${d.schedule.start || "Start on approval"} → ${d.schedule.end || "Ongoing"}</td></tr>
 	${d.kpi ? `<tr><th>KPI</th><td>${esc(d.kpi)}</td></tr>` : ""}
@@ -93,7 +95,7 @@ ${issueList(issues[s.id] ?? [])}
 			for (const ad of childrenOf(plan, s.id))
 				h += `<div class="ad" id="b-${ad.id}">
 	<div class="ad-mock">${renderMock(ad.data, plan.brand)}</div>
-	<div class="ad-info"><h4>${esc(ad.data.name)} ${pill(ad.status)} ${who(ad)}</h4><div class="fmt">${formatLabel(ad.data.platform, ad.data.format)}</div>
+	<div class="ad-info"><h4>${esc(ad.data.name)} ${pill(ad.status)} ${who(ad)}</h4><div class="fmt">${formatLabel(ad.data.platform, ad.data.format)}${ad.data.creative === "ugc" ? " · creator (UGC)" : ""}</div>
 	<table class="kv copy">${copyRows(ad)}<tr><th>CTA</th><td>${esc(ad.data.cta)}</td><td></td></tr><tr><th>URL</th><td class="url">${esc(ad.data.url)}</td><td></td></tr></table>
 	${ad.data.notes ? `<p class="pre note">${esc(ad.data.notes)}</p>` : ""}
 	${issueList(issues[ad.id] ?? [])}</div>
@@ -152,10 +154,12 @@ export function renderCsv(plan) {
 export function renderMarkdown(plan) {
 	const L = [`# ${plan.name}`, "", `${STATUS_LABEL[plan.status]} · ${plan.brand.name}${plan.owner ? ` · owner @${plan.owner}` : ""}`, ""];
 	if (plan.brief) L.push(plan.brief, "");
+	if (plan.settings?.budget.monthly) L.push("## Test budget", "", budgetSummary(plan), "");
 	if (plan.feedback.summary) L.push("## Review", "", plan.feedback.summary, "");
 	for (const c of plan.nodes.filter((n) => n.type === "campaign")) {
 		const d = c.data;
 		L.push(`## ${TYPES.campaign.label}: ${d.name} (${STATUS_LABEL[c.status]}${c.assignee ? `, @${c.assignee}` : ""})`, "");
+		if (d.funnel) L.push(`- Funnel stage: ${FUNNEL[d.funnel]}`);
 		L.push(`- Objective: ${OBJECTIVES[d.objective]} (${d.platforms.map((p) => `${PLATFORMS[p].short}: ${PLATFORMS[p].objectives[d.objective]}`).join("; ")})`);
 		L.push(`- Budget: ${money(d.budget)}`, `- Schedule: ${d.schedule.start || "on approval"} → ${d.schedule.end || "ongoing"}`);
 		if (d.kpi) L.push(`- KPI: ${d.kpi}`);

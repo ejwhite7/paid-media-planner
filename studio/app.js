@@ -2,6 +2,7 @@
 // save, redraw). The server file is the source of truth: when its version changes underneath (Claude edited it), the
 // canvas adopts it. Node graph: campaign → ad set → ad, parent links drawn as edges from out-ports to in-ports.
 import { PLATFORMS, OBJECTIVES, TYPES, STATUSES, STATUS_LABEL, FIELD_LABEL, newNode, nodeById, childrenOf, campaignOf, subtree, issuesByNode, adsetSummary, money, layoutPlan, firstFormat, uid } from "./model.mjs";
+import { FUNNEL, FUNNEL_LABEL, NAME_TOKENS, applyNaming, budgetPlan, conventionName, labelOf, normalizeSettings, suggestedBudget } from "./model.mjs";
 import { renderMock, esc, formatLabel } from "./mocks.mjs";
 import { renderBrief } from "./brief.mjs";
 
@@ -134,8 +135,11 @@ function mutate(fn, { coalesce = null, rerender = "all" } = {}) {
 	S.lastKey = coalesce;
 	S.lastAt = Date.now();
 	fn(S.plan);
+	S.plan.settings = normalizeSettings(S.plan.settings);
+	if (S.plan.settings.naming.auto) applyNaming(S.plan);
 	scheduleSave();
 	rerender === "all" ? renderAll() : renderLight();
+	if ($("#settingsDlg").open) renderSettingsOut();
 }
 function pushUndo(snapshot) {
 	S.undo.push(snapshot);
@@ -248,7 +252,7 @@ function nodeHtml(n, issues) {
 	if (n.type === "campaign")
 		body = `<div class="n-line"><span class="k">Objective</span> ${OBJECTIVES[d.objective] ?? d.objective}</div><div class="n-nets">${d.platforms.map((p) => `<span class="net" style="--c:${PLATFORMS[p].color}">${PLATFORMS[p].short}</span>`).join("") || '<span class="muted">No networks</span>'}</div><div class="n-line muted">${money(d.budget)}</div>`;
 	if (n.type === "adset") body = `<div class="n-line">${esc(adsetSummary(d))}</div>${d.interests.length ? `<div class="n-tags">${d.interests.slice(0, 3).map((i) => `<span>${esc(i)}</span>`).join("")}${d.interests.length > 3 ? `<span>+${d.interests.length - 3}</span>` : ""}</div>` : ""}`;
-	if (n.type === "ad") body = `<div class="n-ad"><div class="n-thumb">${thumb(n)}</div><div class="n-adtext"><div class="n-hl">${esc(d.headline || "—")}</div><div class="n-line muted"><span class="net" style="--c:${PLATFORMS[d.platform]?.color}">${PLATFORMS[d.platform]?.short ?? d.platform}</span> ${esc(PLATFORMS[d.platform]?.formats[d.format]?.name ?? "")}</div></div></div>`;
+	if (n.type === "ad") body = `<div class="n-ad"><div class="n-thumb">${thumb(n)}</div><div class="n-adtext"><div class="n-hl">${esc(d.headline || "—")}</div><div class="n-line muted"><span class="net" style="--c:${PLATFORMS[d.platform]?.color}">${PLATFORMS[d.platform]?.short ?? d.platform}</span> ${esc(PLATFORMS[d.platform]?.formats[d.format]?.name ?? "")}${d.creative === "ugc" ? '<span class="n-ugc">UGC</span>' : ""}</div></div></div>`;
 	return `<div class="node t-${n.type}${S.sel === n.id ? " sel" : ""}" data-id="${n.id}" style="transform:translate(${n.x}px,${n.y}px)">
 	<div class="n-head"><span class="n-type">${t.label} <i>· ${t.sub}</i></span><span class="n-badges">${badges(issues)}</span></div>
 	<div class="n-body"><div class="n-name">${esc(d.name)}</div>${body}</div>
@@ -313,7 +317,7 @@ function renderLeft() {
 		<div class="chk-counts"><span class="bd bd-error">${n("error")}</span> blockers <span class="bd bd-warn">${n("warn")}</span> to fix <span class="bd bd-info">${n("info")}</span> notes</div>
 		<ul class="iss-list">${[...claude, ...all.filter((i) => i.source !== "claude")].sort((a, b) => SEV_ORDER[a.severity] - SEV_ORDER[b.severity]).slice(0, 40).map(row).join("")}</ul>`;
 }
-const ASK = { generate: "Build from prompt", review: "Review plan", improve: "Improve selection", copy: "Write copy", share: "Publish share link" };
+const ASK = { generate: "Build from prompt", review: "Review plan", improve: "Improve selection", copy: "Write copy", creative: "Design creative", share: "Publish share link" };
 function renderAsk() {
 	const r = S.request;
 	const el = $("#askState");
@@ -328,6 +332,7 @@ async function ask(kind) {
 	const note = $("#askNote").value.trim();
 	if (kind === "generate" && !note) return toast("Describe the campaign first: product, offer, audience, budget, networks.") || $("#askNote").focus();
 	if (kind === "improve" && !S.sel) return toast("Select a node to improve first.");
+	if (kind === "creative" && !S.plan.settings.context.length && !confirm("No positioning files are attached (Settings). Design creative from the brief alone?")) return;
 	const nodeIds = S.sel && kind !== "generate" && kind !== "review" ? subtree(S.plan, S.sel) : [];
 	if (S.dirty) await save();
 	try {
@@ -354,7 +359,11 @@ function renderInspector() {
 	const tab = tabs.includes(S.tab[n.type]) ? S.tab[n.type] : tabs[0];
 	const nIssues = issuesByNode(S.plan)[n.id] ?? [];
 	el.innerHTML = `
-	<div class="ins-head t-${n.type}"><span class="n-type">${TYPES[n.type].label} · ${TYPES[n.type].sub}</span><input class="ins-name" data-bind="data.name" value="${esc(n.data.name)}">
+	<div class="ins-head t-${n.type}"><span class="n-type">${TYPES[n.type].label} · ${TYPES[n.type].sub}</span>${
+		S.plan.settings.naming.auto
+			? `<input class="ins-name" data-bind="data.label" value="${esc(labelOf(n, S.plan.settings.naming[n.type]))}" title="The label: the full name follows the naming convention"><div class="muted small ins-full" data-fullname>${esc(n.data.name)}</div>`
+			: `<input class="ins-name" data-bind="data.name" value="${esc(n.data.name)}">`
+	}
 		<div class="ins-actions"><button data-dup title="Duplicate with everything under it (⌘D)">Duplicate</button><button data-del class="danger" title="Delete (⌫)">Delete</button></div></div>
 	<nav class="tabs">${tabs.map((t) => `<button data-tab="${t}" class="${t === tab ? "on" : ""}">${{ mock: "Mock", details: "Details", review: `Review${nIssues.length ? ` <span class="bd ${nIssues.some((i) => i.severity === "error") ? "bd-error" : "bd-warn"}">${nIssues.length}</span>` : ""}` }[t]}</button>`).join("")}</nav>
 	<div class="ins-body">${tab === "mock" ? mockTab(n) : tab === "review" ? reviewTab(n, nIssues) : n.type === "campaign" ? campaignForm(n) : n.type === "adset" ? adsetForm(n) : adForm(n)}</div>`;
@@ -375,13 +384,27 @@ function planInspector() {
 		<div class="btn-row"><button data-plan-dup>Duplicate plan</button><button data-plan-del class="danger">Delete plan</button></div>
 	</div>`;
 }
+function suggestionHtml(n) {
+	const sug = suggestedBudget(S.plan, n);
+	if (!sug) return `<p class="sug muted">${S.plan.settings.budget.monthly ? "Pick a funnel stage to get a suggested budget." : "Set a monthly test budget in Settings to get a suggested budget."}</p>`;
+	const same = n.data.budget.type === "daily" && Number(n.data.budget.amount) === sug.amount;
+	return `<p class="sug"><span>Suggested <b>${sug.currency} ${sug.amount}/day</b> · ${FUNNEL[n.data.funnel]} ${sug.stage.weight}% of ${sug.currency} ${S.plan.settings.budget.monthly.toLocaleString()}/mo${sug.peers > 1 ? `, split ${sug.peers} ways` : ""}</span>${same ? "" : `<button data-apply-budget="${n.id}">Use</button>`}</p>`;
+}
+function applySuggested(plan, ids) {
+	for (const id of ids) {
+		const c = nodeById(plan, id);
+		const sug = c && suggestedBudget(plan, c);
+		if (sug) Object.assign(c.data.budget, { type: "daily", amount: sug.amount, currency: sug.currency });
+	}
+}
 function campaignForm(n) {
 	const d = n.data;
 	return `
 	<div class="f"><span class="fl">Networks <small class="muted">click to toggle, or drag a network onto the node</small></span><div class="chips">${Object.entries(PLATFORMS).map(([k, p]) => `<button class="chip${d.platforms.includes(k) ? " on" : ""}" data-net="${k}" style="--c:${p.color}">${p.short}</button>`).join("")}</div></div>
-	${f("Objective", sel("data.objective", Object.entries(OBJECTIVES), d.objective, "data-re"))}
+	<div class="row2">${f("Objective", sel("data.objective", Object.entries(OBJECTIVES), d.objective, "data-re"))}${f("Funnel stage", sel("data.funnel", [["", "—"], ...Object.entries(FUNNEL)], d.funnel, "data-re"))}</div>
 	${d.platforms.length ? `<table class="native"><tbody>${d.platforms.map((p) => `<tr><td>${PLATFORMS[p].short}</td><td>${esc(PLATFORMS[p].objectives[d.objective] ?? "—")}</td></tr>`).join("")}</tbody></table><p class="muted small">The objective to pick in each ads manager. * means closest match: confirm when building.</p>` : ""}
 	<div class="row3">${f("Budget", sel("data.budget.type", [["daily", "Daily"], ["lifetime", "Lifetime"]], d.budget.type))}${f("Amount", inp("data.budget.amount", d.budget.amount, 'type="number" min="0" data-kind="num"'))}${f("Currency", inp("data.budget.currency", d.budget.currency, 'maxlength="3"'))}</div>
+	${suggestionHtml(n)}
 	${f("Budget set at", sel("data.budget.level", [["campaign", "Campaign (CBO / Advantage+)"], ["adset", "Each ad set (ABO)"]], d.budget.level))}
 	<div class="row2">${f("Start", inp("data.schedule.start", d.schedule.start, 'type="date"'))}${f("End", inp("data.schedule.end", d.schedule.end, 'type="date"'))}</div>
 	${f("KPI / target", inp("data.kpi", d.kpi, 'placeholder="e.g. CPL under $40, 120 leads/month"'))}
@@ -421,7 +444,9 @@ function adForm(n) {
 	${f("Landing page URL", inp("data.url", d.url, 'type="url"'))}
 	<div class="f"><span class="fl">Creative</span><div class="media-list">${d.media.map((m, i) => `<div class="mi">${m.kind === "video" ? `<video src="${esc(m.src)}" muted></video>` : `<img src="${esc(m.src)}" alt="">`}<button data-media-rm="${i}" title="Remove">✕</button></div>`).join("")}<button class="mi add" data-upload>+ Upload</button></div>
 		<input class="url-add" data-media-url placeholder="…or paste an image URL and press Enter"></div>
-	${f("Notes / creative direction", area("data.notes", d.notes, 3, 'placeholder="Shot, subject, text overlay, music…"'))}`;
+	${f("Creative made by", sel("data.creative", [["produced", "Produced (designed or generated)"], ["ugc", "Creator (UGC): keep the placeholder"]], d.creative, "data-re"))}
+	${d.creative === "ugc" ? "" : f("Generation prompt / shot list", area("data.prompt", d.prompt, 3, 'placeholder="What Design creative should make: scene, subject, composition, text overlay, motion."'))}
+	${f(d.creative === "ugc" ? "Creator brief" : "Notes / creative direction", area("data.notes", d.notes, 3, 'placeholder="Shot, subject, text overlay, music…"'))}`;
 }
 function fmtChoices(n) {
 	return netOptions(n).flatMap((p) => Object.entries(PLATFORMS[p].formats).map(([k, v]) => ({ p, k, label: `${PLATFORMS[p].short} · ${v.name}` })));
@@ -725,6 +750,7 @@ function onField(e) {
 		},
 		{ coalesce: `${n.id}.${el.dataset.bind}`, rerender: re ? "all" : "light" },
 	);
+	if (el.dataset.bind === "data.label") $("[data-fullname]").textContent = nodeById(S.plan, n.id).data.name;
 	const c = el.closest(".f")?.querySelector(".cnt");
 	if (c) {
 		c.textContent = `${el.value.length}/${c.dataset.max}`;
@@ -812,6 +838,7 @@ document.addEventListener("click", async (e) => {
 		return pollRequest();
 	}
 	if (b("[data-share]")) return openShare();
+	if ((el = b("[data-apply-budget]"))) return mutate((plan) => applySuggested(plan, [el.dataset.applyBudget]));
 	// Mock media slots: remove, add a carousel card, or pick a file.
 	const host = b("[data-ad]");
 	if (host && (el = b("[data-rm]"))) {
@@ -954,6 +981,92 @@ function openShare() {
 	$("[data-ask='share']", d).addEventListener("click", () => d.close());
 }
 $("#shareBtn").onclick = openShare;
+
+// ---------- settings: naming convention, test budget, funnel weighting, positioning files ----------
+function openSettings() {
+	const d = $("#settingsDlg");
+	const st = S.plan.settings;
+	const tpl = (type) => `${f(`${TYPES[type].label} name`, `<input data-sbind="naming.${type}" value="${esc(st.naming[type])}">`)}<div class="tok">${NAME_TOKENS[type].map((t) => `<code data-tok="${type}" title="Insert">{${t}}</code>`).join("")}</div>`;
+	d.innerHTML = `<form method="dialog">
+		<h3>Plan settings</h3>
+		<p class="muted small">Saved with this plan. Claude reads them with every request.</p>
+		<div class="set-sec"><h4>Naming convention: campaign → ad set → ad</h4>
+			<label class="toggle"><input type="checkbox" data-sbind="naming.auto"${st.naming.auto ? " checked" : ""}> Keep every name on the convention. You and Claude edit the label, and the rest fills itself in.</label>
+			${tpl("campaign")}${tpl("adset")}${tpl("ad")}
+			<div class="preview-names" id="namePreview"></div>
+			<div class="btn-row"><button type="button" data-rename>Rename everything now</button></div>
+		</div>
+		<div class="set-sec"><h4>Test budget</h4>
+			<div class="row3">${f("Monthly budget", `<input type="number" min="0" step="100" data-sbind="budget.monthly" data-kind="num" value="${st.budget.monthly || ""}" placeholder="e.g. 6000">`)}${f("Currency", `<input maxlength="3" data-sbind="budget.currency" value="${esc(st.budget.currency)}">`)}${f("Cost per result, if known", `<input type="number" min="0" step="1" data-sbind="budget.cpa" data-kind="num" value="${st.budget.cpa || ""}" placeholder="e.g. 35">`)}</div>
+			<p class="muted small">Sizes the structure to what the budget can test. Each ad set needs roughly 50 results a week (or at least 20 a day) to leave learning, and each ad needs enough spend to be read. Build from prompt stays within it, and the checks warn when the plan outgrows it.</p>
+			<div class="row3">${Object.keys(FUNNEL).map((k) => f(`${FUNNEL[k]} weight %`, `<input type="number" min="0" max="100" data-sbind="funnel.${k}" data-kind="num" value="${st.funnel[k]}" title="${esc(FUNNEL_LABEL[k])}">`)).join("")}</div>
+			<div id="budgetOut"></div>
+		</div>
+		<div class="set-sec"><h4>Positioning and messaging</h4>
+			<p class="muted small">Add the files from GrowthCast's Positioning Wizard or the marketing-strategy workshop: JTBD, positioning, ICP messaging, product marketing context. Markdown, text, JSON or CSV. Claude grounds copy and creative in them.</p>
+			<ul class="ctx-list" id="ctxList"></ul>
+			<button type="button" data-ctx-add>+ Add files</button>
+		</div>
+		<div class="btn-row end"><button value="close">Done</button></div></form>`;
+	d.showModal();
+	renderSettingsOut();
+}
+function renderSettingsOut() {
+	const d = $("#settingsDlg");
+	const st = S.plan.settings;
+	const sample = ["campaign", "adset", "ad"].map((t) => S.plan.nodes.find((n) => n.type === t)).filter(Boolean);
+	$("#namePreview", d).innerHTML = sample.map((n) => `<span>${esc(conventionName(S.plan, n))}</span>`).join("") || '<span class="muted">Add a campaign to preview names.</span>';
+	const bp = budgetPlan(st);
+	const cur = bp.currency;
+	const have = (t) => S.plan.nodes.filter((n) => n.type === t).length;
+	const camps = S.plan.nodes.filter((n) => n.type === "campaign");
+	const staged = camps.filter((c) => c.data.funnel);
+	$("#budgetOut", d).innerHTML = `
+		<table class="stages"><thead><tr><th>Stage</th><th>Weight</th><th>Monthly</th><th>Daily</th><th>Testable</th><th>Campaigns</th></tr></thead><tbody>
+		${bp.stages.map((s) => `<tr><td title="${esc(FUNNEL_LABEL[s.key])}"><b>${s.label}</b></td><td>${s.weight}%</td><td>${bp.monthly ? `${cur} ${Math.round(s.monthly).toLocaleString()}` : "—"}</td><td>${bp.monthly ? `${cur} ${Math.round(s.daily)}` : "—"}</td><td>${s.adsets ? `${s.adsets} ad set${s.adsets > 1 ? "s" : ""} × ${s.ads} ads` : bp.monthly && s.weight ? "fold in" : "—"}</td><td>${camps.filter((c) => c.data.funnel === s.key).length}</td></tr>`).join("")}
+		</tbody></table>
+		${bp.monthly ? `<p class="small">Supports about <b>${bp.campaigns} campaign${bp.campaigns === 1 ? "" : "s"}, ${bp.adsets} ad sets and ${bp.ads} ads</b> at ${cur} ${Math.round(bp.perAdsetDaily)}+/day per ad set. The plan has ${have("campaign")}, ${have("adset")} and ${have("ad")}.</p>` : ""}
+		${bp.notes.length ? `<ul class="set-notes">${bp.notes.map((x) => `<li>${esc(x)}</li>`).join("")}</ul>` : ""}
+		${bp.monthly && staged.length ? `<div class="btn-row"><button type="button" data-apply-all>Use suggested budgets on ${staged.length} staged campaign${staged.length === 1 ? "" : "s"}</button></div>` : bp.monthly ? '<p class="muted small">Give each campaign a funnel stage to get a suggested budget.</p>' : ""}`;
+	$("#ctxList", d).innerHTML = st.context.map((c, i) => `<li><span><a href="${esc(c.path)}" target="_blank">${esc(c.name)}</a> <small class="muted">${(c.size / 1024).toFixed(1)} KB</small></span><button type="button" data-ctx-rm="${i}">Remove</button></li>`).join("") || '<li class="muted">No files yet.</li>';
+}
+$("#settingsDlg").addEventListener("input", (e) => {
+	const el = e.target;
+	if (!el.dataset.sbind) return;
+	const v = el.type === "checkbox" ? el.checked : el.dataset.kind === "num" ? Number(el.value || 0) : el.value;
+	mutate((plan) => setPath(plan.settings, el.dataset.sbind, v), { coalesce: `settings.${el.dataset.sbind}`, rerender: el.type === "checkbox" ? "all" : "light" });
+});
+$("#settingsDlg").addEventListener("click", async (e) => {
+	const b = (s) => e.target.closest(s);
+	let el;
+	if ((el = b("[data-tok]"))) {
+		const input = $(`[data-sbind="naming.${el.dataset.tok}"]`, $("#settingsDlg"));
+		input.setRangeText(el.textContent, input.selectionStart ?? input.value.length, input.selectionEnd ?? input.value.length, "end");
+		input.dispatchEvent(new Event("input", { bubbles: true }));
+		return input.focus();
+	}
+	if (b("[data-rename]")) {
+		let n = 0;
+		mutate((plan) => (n = applyNaming(plan)));
+		return toast(n ? `Renamed ${n} node${n === 1 ? "" : "s"} to the convention.` : "Every name already follows the convention.");
+	}
+	if (b("[data-apply-all]")) return mutate((plan) => applySuggested(plan, plan.nodes.filter((n) => n.type === "campaign" && n.data.funnel).map((n) => n.id)));
+	if ((el = b("[data-ctx-rm]"))) return mutate((plan) => plan.settings.context.splice(Number(el.dataset.ctxRm), 1));
+	if (b("[data-ctx-add]")) {
+		const files = await new Promise((ok) => {
+			const i = Object.assign(document.createElement("input"), { type: "file", accept: ".md,.markdown,.txt,.json,.csv", multiple: true });
+			i.onchange = () => ok([...i.files]);
+			i.click();
+		});
+		for (const file of files) {
+			const r = await fetch(`/api/plans/${S.plan.id}/context`, { method: "POST", headers: { "content-type": "text/plain", "x-filename": file.name }, body: file });
+			const c = await r.json();
+			if (!r.ok) toast(c.error);
+			else mutate((plan) => plan.settings.context.push(c));
+		}
+	}
+});
+$("#settingsBtn").onclick = openSettings;
 addEventListener("hashchange", () => {
 	const id = location.hash.slice(1);
 	if (id && id !== S.plan?.id) openPlan(id).catch(() => toast("No such plan."));

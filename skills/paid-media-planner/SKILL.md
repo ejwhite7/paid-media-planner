@@ -26,7 +26,8 @@ your changes land. Always:
   "brand": { "name": "Acme Lawn", "handle": "acmelawn", "website": "acmelawn.com", "color": "#2f7d32", "logo": "" },
   "nodes": [
     { "id": "cp_x", "type": "campaign", "parent": null, "x": 80, "y": 200, "status": "draft", "assignee": "", "comments": [],
-      "data": { "name": "…", "platforms": ["meta", "tiktok"], "objective": "leads",          // awareness | traffic | engagement | video_views | leads | app | sales
+      "data": { "name": "…", "label": "Short human part of the name", "funnel": "tof",       // tof | mof | bof | ""
+                "platforms": ["meta", "tiktok"], "objective": "leads",          // awareness | traffic | engagement | video_views | leads | app | sales
                 "budget": { "type": "daily", "amount": 100, "currency": "USD", "level": "campaign" },   // level: campaign (CBO) | adset (ABO)
                 "schedule": { "start": "2026-03-01", "end": "" }, "kpi": "CPL < $40", "notes": "" } },
     { "id": "as_x", "type": "adset", "parent": "cp_x", …,
@@ -39,11 +40,43 @@ your changes land. Always:
                 "url": "https://…", "displayUrl": "acmelawn.com",
                 "media": [{ "src": "/assets/<plan>/<file>", "kind": "image", "name": "…" }],
                 "cards": [{ "headline": "…", "src": "…", "kind": "image" }],            // carousel formats only
-                "notes": "Creative direction for the placeholder." } }
+                "notes": "Creative direction, or the creator brief for UGC.",
+                "creative": "produced",   // produced (designed or generated) | ugc (shot by a creator: keep the placeholder)
+                "prompt": "The generation prompt or shot list Design creative works from." } }
   ],
-  "feedback": { "at": "ISO time", "summary": "…", "items": [{ "node": "ad_x", "severity": "warn", "text": "…", "suggestion": "…", "resolved": false }] }
+  "feedback": { "at": "ISO time", "summary": "…", "items": [{ "node": "ad_x", "severity": "warn", "text": "…", "suggestion": "…", "resolved": false }] },
+  "settings": {
+    "naming": { "auto": true, "campaign": "{seq} // {funnel} // {objective} // {label}", "adset": "{seq} // {label}", "ad": "{seq} // {label} // {format}" },
+    "budget": { "monthly": 6000, "currency": "USD", "cpa": 35 },   // the test budget; cpa = expected cost per optimisation event, 0 if unknown
+    "funnel": { "tof": 60, "mof": 25, "bof": 15 },                   // budget weighting by funnel stage
+    "context": [{ "name": "acme-positioning.md", "path": "/context/<plan>/<file>" }]   // positioning and messaging files
+  }
 }
 ```
+
+## Settings
+
+The request block repeats the settings in plain words: the naming convention, what the test budget can carry, and the
+absolute paths of the positioning files. They bind every request.
+
+- **Naming.** With `naming.auto` on, `normalize` rebuilds every `name` from the templates on each save, so set
+  `data.label` (the human part, such as "Home cleaning — creators") and leave `name` alone. Tokens: `{seq}` (01, 01.02,
+  01.02.A in canvas order), `{funnel}`, `{objective}`, `{network}`, `{label}`, `{brand}`, `{date}` (YYYYMM), and for ad
+  sets `{geo}` and `{optimization}`, for ads `{letter}`, `{format}` and `{cta}`. With it off, write names that follow the
+  templates anyway. `canvas.mjs name <id>` renames everything once.
+- **Test budget.** `budgetPlan(settings)` in `studio/model.mjs` sizes the structure: each ad set needs about 50
+  optimisation events a week (`cpa` × 50 a week) or at least 20 a day, and each ad about 7 a day to be read. A stage that
+  can't fund one ad set gets folded into another. Treat the result as a ceiling. Never build more ad sets or ads than it
+  says. If the user asks for more, build the most important ones first and say what you left out and why.
+- **Funnel weighting.** Give every campaign a `funnel` stage. Its suggested daily budget is the stage's share of the
+  monthly budget split across that stage's campaigns (`suggestedBudget`). Use it unless the note gives budgets. TOF is
+  prospecting (broad, interests, lookalikes), MOF is engaged audiences and nurture, BOF is retargeting and high intent.
+  Each stage excludes the ones below it, and BOF excludes converters.
+- **Positioning files.** These are Markdown from GrowthCast's Positioning Wizard or the marketing-strategy workshop: JTBD
+  analysis, positioning statements, ICP messaging, product marketing context. Read every file before writing copy or
+  creative. Take angles from the jobs, switching forces and differentiators, and lift customer language word for word.
+  Use only proof they contain. If they contradict the brief, follow the files and raise it in a feedback item. Users can
+  attach files from chat with `canvas.mjs context <id> <file>`.
 
 Parents must be one level up: an ad set's parent is a campaign, an ad's is an ad set. New ids: `cp_`, `as_`, `ad_` plus
 six random lowercase letters or digits. An ad's `platform` must be one of its campaign's `platforms`.
@@ -74,10 +107,13 @@ The request block says which one it is. The user's note, if any, wins over these
 1. Pick the objective from the business outcome, not the vanity metric (leads business → `leads`, ecommerce → `sales`).
 2. Pick networks where the audience actually is, and say why in the campaign `notes`. Don't spread a small budget thin:
    under about $3k/month, one or two networks beat five.
-3. Create one campaign per network group that shares an objective and budget logic, then 2–4 ad sets that differ in one
-   clear variable each (prospecting interest stack vs. broad vs. retargeting or lookalike), with exclusions so they don't
+3. Size the structure to the test budget (see Settings) before anything else. Create one campaign per funnel stage the
+   budget funds (with `funnel` set and the suggested budget), per network group that shares an objective, then only as
+   many ad sets as the budget carries, each differing in one clear variable (prospecting interest stack vs. broad vs. retargeting or lookalike), with exclusions so they don't
    overlap. Retargeting ad sets exclude converters.
-4. Create 2–3 ads per ad set that test different angles (pain, outcome, proof, offer), not trivially different wording.
+4. Create as many ads per ad set as the budget carries (2–5) that test different angles (pain, outcome, proof, offer),
+   not trivially different wording. Mark creator-led ads `"creative": "ugc"`, put the creator brief in their notes, and
+   give produced ads a `prompt`.
    Write finished copy inside the limits, a real CTA from that network's list, and `notes` describing the creative to
    shoot or design. Leave media empty: the placeholders show the right shape.
 5. Fill `brief` if it was empty, then run validate and layout.
@@ -98,6 +134,31 @@ so the reviewer can see your reasoning on the node.
 **Write copy.** Replace lorem ipsum in the target ads with finished copy, within limits, varied across ads in the same
 ad set. Put creative direction in `notes`.
 
+**Design creative.** Make finished creative for every `produced` ad in scope. Leave `ugc` ads' media empty, and make
+sure each one's notes hold a creator brief: hook in the first 2 seconds, the beats, the claims they may make, and the
+CTA. Then, per ad:
+1. Read the positioning files and the ad's copy, notes and `prompt`. Decide the one idea the visual carries. It
+   should be the same angle as the copy, not a generic product shot.
+2. Pick the medium the format calls for, from what this session actually has:
+   - Images: an image-generation tool or API the user has set up (OpenAI image generation, Gemini's Nano Banana).
+   - Video for Reels, Stories, TikTok, Snap and YouTube: Veo or Seedance, or the ai-movie-making skill if it's
+     installed.
+   - Typographic and data-led statics, or motion loops: p5.js or HTML/CSS rendered headlessly at the exact size.
+   - Product hero renders: Blender. Spatial captures: a 3D Gaussian splat render.
+   - Composite: put generated plates under real type and the logo in HTML or p5, rather than asking a model to spell
+     text.
+
+   Use only tools and keys the user already has. Never ask for keys in chat or write them to a file. If nothing can
+   generate media, write a production-ready `prompt` per ad and say so.
+3. Render at the format's `size` from `PLATFORMS` (1080×1350 for ig_feed, 1080×1920 for stories and TikTok). Keep the
+   network's safe zones clear of text. For Stories and Reels that means roughly the top 14% and the bottom 20%.
+4. Look at every output before attaching it. Reject garbled text, extra fingers, invented product UI or logos, and
+   anything that implies a claim the files don't support.
+5. Attach the file with `node <tools>/canvas.mjs attach <plan> <ad id> <file>` (`--card n` for carousel cards). Write
+   the final prompt to `prompt` and what was made to `notes`.
+
+Finish with one line per ad: what was made and with which tool. List the ads still waiting on creators.
+
 **Publish share link.** Follow the `/paid-media-planner:share` command's steps.
 
 ## Working without a request
@@ -108,6 +169,7 @@ the user it's there. Asked about a plan: `canvas.mjs list`, then read the file.
 
 ## Quality bar
 
+- Names follow the naming convention in the settings, and the structure stays within what the test budget carries.
 - Copy reads like the brand, not like an ad generator: specific nouns, numbers from the brief, no "unlock", "elevate"
   or "game-changer". Never invent claims, prices, reviews or statistics the brief doesn't support. Put a `[confirm: …]`
   marker in the copy where a fact is needed.

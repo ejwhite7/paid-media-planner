@@ -6,14 +6,15 @@
 //
 // Usage: node tools/canvas.mjs [--port 4720] [--open]
 //        node tools/canvas.mjs list | new [name] | path <id> | validate <id|file> | layout <id> | export <id> [--out dir]
+//        node tools/canvas.mjs name <id> | attach <id> <ad id> <file> [--card n] | context <id> <file>
 //        Every form takes --home <dir> to keep plans somewhere other than ~/.paid-media-planner.
 import { createServer } from "node:http";
 import { spawn } from "node:child_process";
 import { createReadStream, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
-import { dirname, extname, join, resolve } from "node:path";
+import { basename, dirname, extname, join, resolve } from "node:path";
 import { homedir } from "node:os";
 import { fileURLToPath } from "node:url";
-import { layoutPlan, newPlan, normalize, lint, nodeById, TYPES, PLATFORMS } from "../studio/model.mjs";
+import { applyNaming, budgetSummary, layoutPlan, newPlan, normalize, lint, nodeById, TYPES, PLATFORMS } from "../studio/model.mjs";
 import { renderBrief, renderCsv, renderMarkdown } from "../studio/brief.mjs";
 import { formatLabel } from "../studio/mocks.mjs";
 
@@ -24,12 +25,13 @@ const flag = (name, d) => (args.includes(name) ? args[args.indexOf(name) + 1] : 
 // Arguments that aren't a --flag or a flag's value: the subcommand and its operands.
 const positional = args.filter((a, i) => !a.startsWith("--") && !(args[i - 1]?.startsWith("--") && !["--open"].includes(args[i - 1])));
 let port = Number(flag("--port", 4720));
-let home, plansDir, assetsDir, reqPath;
+let home, plansDir, assetsDir, contextDir, reqPath;
 // Where plans, uploads and the queued request live. Tests point it at a temporary folder.
 export function setHome(dir) {
 	home = resolve(dir);
 	plansDir = join(home, "plans");
 	assetsDir = join(home, "assets");
+	contextDir = join(home, "context");
 	reqPath = join(home, "request.json");
 	mkdirSync(plansDir, { recursive: true });
 	mkdirSync(assetsDir, { recursive: true });
@@ -80,11 +82,32 @@ const listPlans = () =>
 		.sort((a, b) => String(b.updatedAt).localeCompare(String(a.updatedAt)));
 
 // Inline local assets as data: URIs so an exported pack is a single file that works anywhere.
-const MIME = { ".html": "text/html; charset=utf-8", ".js": "text/javascript", ".mjs": "text/javascript", ".css": "text/css", ".json": "application/json", ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".gif": "image/gif", ".webp": "image/webp", ".svg": "image/svg+xml", ".avif": "image/avif", ".mp4": "video/mp4", ".webm": "video/webm", ".mov": "video/quicktime", ".ttf": "font/ttf" };
+const MIME = { ".md": "text/markdown; charset=utf-8", ".txt": "text/plain; charset=utf-8", ".csv": "text/csv; charset=utf-8", ".html": "text/html; charset=utf-8", ".js": "text/javascript", ".mjs": "text/javascript", ".css": "text/css", ".json": "application/json", ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".gif": "image/gif", ".webp": "image/webp", ".svg": "image/svg+xml", ".avif": "image/avif", ".mp4": "video/mp4", ".webm": "video/webm", ".mov": "video/quicktime", ".ttf": "font/ttf" };
 const assetFile = (src) => {
 	const m = /^\/assets\/([a-z0-9_-]+)\/([a-z0-9._-]+)$/i.exec(src ?? "");
 	return m && okId(m[1]) ? join(assetsDir, m[1], m[2]) : null;
 };
+// Positioning and messaging files live in context/<plan>/ and are referenced from plan.settings.context.
+const CONTEXT_EXT = [".md", ".markdown", ".txt", ".json", ".csv"];
+const contextFile = (src) => {
+	const m = /^\/context\/([a-z0-9_-]+)\/([a-z0-9._-]+)$/i.exec(src ?? "");
+	return m && okId(m[1]) ? join(contextDir, m[1], m[2]) : null;
+};
+const safeName = (name, fallback) => `${Date.now().toString(36)}-${String(name ?? fallback).replace(/[^a-z0-9._-]+/gi, "-").replace(/\.[^.]*$/, "").slice(0, 40)}`;
+function storeContext(id, name, data) {
+	const ext = extname(String(name)).toLowerCase();
+	if (!CONTEXT_EXT.includes(ext)) throw fail(415, `Positioning files must be ${CONTEXT_EXT.join(", ")} (export PDFs or docs as Markdown first)`);
+	const file = `${safeName(name, "context")}${ext === ".markdown" ? ".md" : ext}`;
+	mkdirSync(join(contextDir, id), { recursive: true });
+	writeFileSync(join(contextDir, id, file), data);
+	return { name: basename(String(name)), path: `/context/${id}/${file}`, size: data.length, addedAt: new Date().toISOString() };
+}
+function storeAsset(id, name, data, ext) {
+	const file = `${safeName(name, "asset")}${ext}`;
+	mkdirSync(join(assetsDir, id), { recursive: true });
+	writeFileSync(join(assetsDir, id, file), data);
+	return { src: `/assets/${id}/${file}`, kind: /^\.(mp4|webm|mov)$/.test(ext) ? "video" : "image", name: basename(String(name)) };
+}
 function inlineAssets(plan) {
 	const copy = structuredClone(plan);
 	const inline = (o, key = "src") => {
@@ -127,6 +150,7 @@ const KIND = {
 	review: ["Review plan", "Review the plan as a senior paid-media strategist. Write plan.feedback = { at, summary, items: [{ node, severity, text, suggestion }] }, replacing the previous review. Don't change nodes unless the note asks you to."],
 	improve: ["Improve selection", "Improve the selected nodes as the note asks (copy, targeting, structure). Leave the rest alone. Add one feedback item (severity info) per change saying what you changed and why."],
 	share: ["Publish share link", "Export the hand-off pack with `node \"TOOLS/canvas.mjs\" export ID`, read the plan.html it writes, and publish it as a private claude.ai Artifact (load the artifact-design skill first; the page is self-contained). Give the user the link, and say that it's private until they share it."],
+	creative: ["Design creative", "Design finished creative for the produced ads (only the selected ones if there is a selection), following the skill's \"Design creative\" steps: read the positioning files, write each ad's prompt, generate or render the image or video at the format's size with the tools available in this session, check it, and attach it with `node \"TOOLS/canvas.mjs\" attach ID <ad id> <file>`. Ads marked UGC keep their placeholder: write the creator brief in their notes instead."],
 	copy: ["Write copy", "Write finished copy for every ad still in lorem ipsum (only the selected ones if there is a selection), fitted to each network's limits and grounded in the plan's brief. In each ad's notes, describe the creative the placeholder should become (shot, subject, text overlay)."],
 };
 function requestContext(r) {
@@ -140,6 +164,9 @@ function requestContext(r) {
 		`Nodes: ${["campaign", "adset", "ad"].map((t) => `${plan.nodes.filter((n) => n.type === t).length} ${TYPES[t].label.toLowerCase()}s`).join(", ")}; ${checks.length} open checks (${checks.filter((c) => c.severity === "error").length} blockers).`,
 		sel.length ? `Selected:\n${sel.map(describe).join("\n")}` : "Nothing selected: the request is about the whole plan.",
 		r.note ? `The user's note: ${r.note}` : "No note.",
+		budgetSummary(plan),
+		`Naming convention (${plan.settings.naming.auto ? "on: edit data.label, the name is rebuilt on save" : "off"}): campaign "${plan.settings.naming.campaign}", ad set "${plan.settings.naming.adset}", ad "${plan.settings.naming.ad}".`,
+		plan.settings.context.length ? `Positioning and messaging context (read before writing copy or creative):\n${plan.settings.context.map((c) => `- ${c.name}: ${contextFile(c.path) ?? c.path}`).join("\n")}` : "No positioning files attached.",
 		`What to do: ${KIND[r.kind][1].replace("TOOLS", tools).replace("ID", plan.id)}`,
 		`Follow the paid-media-planner skill for the plan schema, each network's rules and how to write feedback. Edit the plan JSON directly, keeping the ids and x/y of nodes you don't change, then run \`node "${join(tools, "canvas.mjs")}" validate ${plan.id}\` (and \`layout ${plan.id}\` after adding nodes). The open canvas reloads by itself. Finish with a short summary in chat.`,
 	].join("\n");
@@ -166,6 +193,37 @@ const cli = {
 		const { plan } = loadPlan(positional[1]);
 		savePlan(layoutPlan(plan));
 		console.log(JSON.stringify({ ok: true, nodes: plan.nodes.length }));
+	},
+	name: () => {
+		const { plan } = loadPlan(positional[1]);
+		const renamed = applyNaming(plan);
+		savePlan(plan);
+		console.log(JSON.stringify({ ok: true, renamed }));
+	},
+	attach: () => {
+		const [, id, adId, src] = positional;
+		const { plan } = loadPlan(id);
+		const ad = nodeById(plan, adId);
+		if (ad?.type !== "ad") throw fail(404, `No ad "${adId}" in ${id}`);
+		const ext = extname(src ?? "").toLowerCase().replace(".jpeg", ".jpg");
+		if (!existsSync(src ?? "") || !MIME[ext] || /text|json|html|javascript|css|font/.test(MIME[ext])) throw fail(415, "Attach an image or video file (png, jpg, webp, gif, avif, mp4, webm, mov)");
+		const m = storeAsset(id, basename(src), readFileSync(src), ext);
+		const card = flag("--card");
+		if (card != null) {
+			while (ad.data.cards.length <= Number(card)) ad.data.cards.push({ headline: `Card ${ad.data.cards.length + 1} headline` });
+			Object.assign(ad.data.cards[Number(card)], m);
+		} else ad.data.media = [m, ...ad.data.media.slice(1)];
+		savePlan(plan);
+		console.log(JSON.stringify(m));
+	},
+	context: () => {
+		const [, id, src] = positional;
+		const { plan } = loadPlan(id);
+		if (!existsSync(src ?? "")) throw fail(404, `No file "${src}"`);
+		const c = storeContext(id, basename(src), readFileSync(src));
+		plan.settings.context.push(c);
+		savePlan(plan);
+		console.log(JSON.stringify({ ...c, file: contextFile(c.path) }));
 	},
 	export: () => {
 		const { plan } = loadPlan(positional[1]);
@@ -233,6 +291,7 @@ export function serve(listenPort = port) {
 			if (req.method === "GET" && parts.length === 1 && /^[a-z]+\.(m?js|css|svg|jpg)$/.test(parts[0])) return file(res, join(studio, parts[0]));
 			if (req.method === "GET" && parts.length === 2 && parts[0] === "fonts" && /^[a-z0-9-]+\.ttf$/.test(parts[1])) return file(res, join(studio, "fonts", parts[1]));
 			if (req.method === "GET" && parts[0] === "assets") return file(res, assetFile(url.pathname) ?? "/nonexistent");
+			if (req.method === "GET" && parts[0] === "context") return file(res, contextFile(url.pathname) ?? "/nonexistent");
 
 			if (route === "GET /api/plans") return send(res, 200, listPlans());
 			if (route === "POST /api/plans") {
@@ -252,6 +311,7 @@ export function serve(listenPort = port) {
 			if (route === "DELETE /api/plans/:id") {
 				rmSync(planPath(id), { force: true });
 				rmSync(join(assetsDir, okId(id) ?? "_"), { recursive: true, force: true });
+				rmSync(join(contextDir, okId(id) ?? "_"), { recursive: true, force: true });
 				return send(res, 200, { ok: true });
 			}
 			if (route === "POST /api/plans/:id/assets") {
@@ -259,11 +319,11 @@ export function serve(listenPort = port) {
 				const type = String(req.headers["content-type"] ?? "");
 				const ext = Object.entries(MIME).find(([e, m]) => m === type && !/text|json|html|javascript|css/.test(m))?.[0];
 				if (!ext) throw fail(415, `Images or video only (got ${type || "no type"})`);
-				const data = await body(req, 60e6);
-				const name = `${Date.now().toString(36)}-${String(req.headers["x-filename"] ?? "asset").replace(/[^a-z0-9._-]+/gi, "-").replace(/\.[^.]*$/, "").slice(0, 40)}${ext}`;
-				mkdirSync(join(assetsDir, id), { recursive: true });
-				writeFileSync(join(assetsDir, id, name), data);
-				return send(res, 201, { src: `/assets/${id}/${name}`, kind: type.startsWith("video/") ? "video" : "image", name: String(req.headers["x-filename"] ?? name) });
+				return send(res, 201, storeAsset(id, req.headers["x-filename"] ?? "asset", await body(req, 60e6), ext));
+			}
+			if (route === "POST /api/plans/:id/context") {
+				if (!okId(id)) throw fail(400, "Bad plan id");
+				return send(res, 201, storeContext(id, String(req.headers["x-filename"] ?? "context.md"), await body(req, 1e6)));
 			}
 			if (route === "GET /api/plans/:id/export.html") return send(res, 200, exportHtml(loadPlan(id).plan), { "content-type": "text/html; charset=utf-8", ...(url.searchParams.has("download") ? { "content-disposition": `attachment; filename="${id}.html"` } : {}) });
 			if (route === "GET /api/plans/:id/export.csv") return send(res, 200, renderCsv(loadPlan(id).plan), { "content-type": "text/csv; charset=utf-8", "content-disposition": `attachment; filename="${id}-build-sheet.csv"` });

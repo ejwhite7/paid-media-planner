@@ -45,7 +45,8 @@ function ctx(ad, brand, opts) {
 			return `<div class="mk-media has"${attrs} style="${style}">${el}${editable ? `<button class="mk-rm" data-rm="${slot}" title="Remove">✕</button>` : ""}</div>`;
 		}
 		const size = f.size ?? "";
-		return `<div class="mk-media mk-ph"${attrs} style="${style}"><div><b>${editable ? "Drop creative" : "Creative"}</b><small>${esc(size)}${r ? ` · ${r[0] > 99 ? (r[0] / r[1]).toFixed(2) : r[0]}:${r[0] > 99 ? 1 : r[1]}` : ""}</small></div></div>`;
+		const ugc = ad.creative === "ugc";
+		return `<div class="mk-media mk-ph${ugc ? " mk-ugc" : ""}"${attrs} style="${style}"><div><b>${ugc ? "Creator video (UGC)" : editable ? "Drop creative" : "Creative"}</b><small>${esc(size)}${r ? ` · ${r[0] > 99 ? (r[0] / r[1]).toFixed(2) : r[0]}:${r[0] > 99 ? 1 : r[1]}` : ""}</small></div></div>`;
 	};
 	const avatar = (size = 36) =>
 		brand.logo

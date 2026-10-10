@@ -79,3 +79,56 @@ test("brief, CSV and Markdown include the network's objective and the copy", () 
 	assert.match(renderCsv(p), /Mow less, live more/);
 	assert.match(renderMarkdown(p), /# Spring/);
 });
+
+test("naming convention: tokens, empty tokens drop with their separator, labels read back", async () => {
+	const { applyTemplate, applyNaming, conventionName } = await import("../studio/model.mjs");
+	assert.equal(applyTemplate("{seq} // {funnel} // {objective} // {label}", { seq: "01", funnel: "", objective: "Sales", label: "Acq" }), "01 // Sales // Acq");
+	assert.equal(applyTemplate("{funnel}_{seq}_{label}_{cta}", { seq: "01", funnel: "", label: "A", cta: "" }), "01_A");
+	const p = normalize(newPlan()).plan;
+	p.nodes[0].data.name = "01 // TOF // Sales // Acquisition";
+	p.nodes[0].data.funnel = "tof";
+	p.nodes[0].data.objective = "sales";
+	assert.equal(applyNaming(p), 2);
+	assert.equal(p.nodes[0].data.name, "01 // TOF // Sales // Acquisition", "label read back from a convention-built name");
+	assert.equal(conventionName(p, p.nodes[1]), "01.01 // Ad set 1");
+	assert.equal(p.nodes[2].data.name, "01.01.A // Ad 1 // Facebook feed");
+	p.settings.naming.auto = true;
+	p.nodes[2].data.label = "Speed";
+	assert.equal(normalize(p).plan.nodes[2].data.name, "01.01.A // Speed // Facebook feed", "normalize renames when auto is on");
+});
+
+test("test budget sizes the structure and the funnel weights suggest campaign budgets", async () => {
+	const { budgetPlan, suggestedBudget } = await import("../studio/model.mjs");
+	const big = budgetPlan({ budget: { monthly: 6000 }, funnel: { tof: 60, mof: 25, bof: 15 } });
+	assert.equal(big.campaigns, 3);
+	assert.ok(big.adsets >= 3 && big.adsets <= 12);
+	assert.ok(big.stages.every((s) => s.ads >= 2 && s.ads <= 5));
+	const small = budgetPlan({ budget: { monthly: 1500 }, funnel: { tof: 60, mof: 25, bof: 15 } });
+	assert.equal(small.campaigns, 1, "a small budget funds one stage");
+	assert.match(small.notes.join(" "), /fold it into TOF/);
+	const pricey = budgetPlan({ budget: { monthly: 3000, cpa: 200 } });
+	assert.equal(pricey.adsets, 1);
+	assert.match(pricey.notes.join(" "), /cheaper event/);
+
+	const p = normalize(newPlan()).plan;
+	p.settings.budget.monthly = 6000;
+	p.nodes[0].data.funnel = "tof";
+	const sug = suggestedBudget(p, p.nodes[0]);
+	assert.equal(sug.amount, Math.round((6000 * 0.6 * 12) / 365));
+	p.nodes[0].data.budget.amount = 10;
+	assert.match(lint(p).map((i) => i.text).join("\n"), /suggests USD 118\/day/);
+	for (let i = 0; i < 12; i++) p.nodes.push(newNode("adset", { parent: p.nodes[0].id }));
+	assert.match(lint(normalize(p).plan).map((i) => i.text).join("\n"), /13 ad sets on USD 6,000\/month/);
+});
+
+test("funnel stage and UGC are inferred for older plans, and UGC keeps its placeholder", () => {
+	const p = newPlan();
+	delete p.nodes[0].data.funnel;
+	p.nodes[0].data.name = "Warm Conversion — BOF";
+	delete p.nodes[2].data.creative;
+	p.nodes[2].data.notes = "Creator ad: founder-style UGC";
+	const { plan } = normalize(p);
+	assert.equal(plan.nodes[0].data.funnel, "bof");
+	assert.equal(plan.nodes[2].data.creative, "ugc");
+	assert.match(renderMock(plan.nodes[2].data, {}), /Creator video \(UGC\)/);
+});

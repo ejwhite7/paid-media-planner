@@ -21,6 +21,7 @@
 		<nav class="views"><button data-view="canvas" class="on">Canvas</button><button data-view="mocks">Mocks</button><button data-view="brief">Brief</button></nav>
 		<span class="grow"></span>
 		<span id="saveState" class="muted small"></span>
+		<button id="settingsBtn" title="Naming, test budget, funnel weighting, positioning files">Settings</button>
 		<button id="shareBtn" class="primary">Share</button>
 	</header>
 	<main>
@@ -39,6 +40,7 @@
 				<button data-ask="review">Review plan</button>
 				<button data-ask="improve">Improve selection</button>
 				<button data-ask="copy">Write copy</button>
+				<button data-ask="creative" title="Claude reads your positioning files and makes the produced creative. UGC ads keep their placeholders.">Design creative</button>
 			</div>
 			<div id="askState" class="ask-state" hidden></div>
 
@@ -57,6 +59,7 @@
 		<aside class="right" id="inspector"></aside>
 	</main>
 	<dialog id="shareDlg"></dialog>
+	<dialog id="settingsDlg" class="wide"></dialog>
 	<div id="toast" role="status"></div>
 	<script type="module">
 		import { PLATFORMS } from "./model.mjs";

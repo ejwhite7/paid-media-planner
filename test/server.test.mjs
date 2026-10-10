@@ -37,8 +37,20 @@ test("server: create, save with version check, upload, export, queue a request",
 		assert.match(html, /data:image\/png;base64,/, "export inlines uploaded assets");
 		assert.match(html, /GrowthCast/);
 
+		const ctx = await fetch(`${base}/api/plans/${plan.id}/context`, { method: "POST", headers: { "x-filename": "positioning.md" }, body: "# Positioning" }).then(j);
+		assert.match(ctx.path, /^\/context\/.+\.md$/);
+		assert.equal(await fetch(`${base}${ctx.path}`).then((r) => r.text()), "# Positioning");
+		assert.equal((await fetch(`${base}/api/plans/${plan.id}/context`, { method: "POST", headers: { "x-filename": "deck.pdf" }, body: "%PDF" })).status, 415);
+		const withCtx = await fetch(`${base}/api/plans/${plan.id}`).then(j);
+		withCtx.plan.settings.context.push(ctx);
+		await fetch(`${base}/api/plans/${plan.id}`, { method: "PUT", headers: { "x-base-version": withCtx.version }, body: JSON.stringify(withCtx.plan) });
+
 		const r = await fetch(`${base}/api/request`, { method: "POST", body: JSON.stringify({ kind: "review", planId: plan.id, note: "Be harsh" }) }).then(j);
 		assert.match(r.context, /Review plan[\s\S]*Be harsh/);
+		assert.match(r.context, /Naming convention/);
+		assert.match(r.context, /positioning\.md: .+context/);
+		const cr = await fetch(`${base}/api/request`, { method: "POST", body: JSON.stringify({ kind: "creative", planId: plan.id }) }).then(j);
+		assert.match(cr.context, /Design creative[\s\S]*canvas\.mjs\\?" attach/);
 		assert.equal(r.deliveredAt, null);
 	} finally {
 		server.close();
