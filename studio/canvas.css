@@ -38,7 +38,7 @@ h4 { font-family: var(--mono); font-weight: 400; font-size: 12px; letter-spacing
 .views button { border: 0; background: transparent; padding: 6px 14px; color: var(--fg); }
 .views button.on { background: var(--fg); color: var(--bg); }
 
-main { display: grid; grid-template-columns: var(--lw, 260px) 1fr var(--rw, 380px); height: calc(100% - 60px); }
+main { --lw: 260px; --rw: 380px; display: grid; grid-template-columns: var(--lw) 1fr var(--rw); height: calc(100% - 60px); }
 body.hide-left main { --lw: 0px; } body.hide-right main { --rw: 0px; }
 body.hide-left aside.left, body.hide-right aside.right { display: none; }
 main > aside.left { grid-column: 1; } main > #stage { grid-column: 2; grid-row: 1; } main > aside.right { grid-column: 3; grid-row: 1; }
@@ -206,7 +206,7 @@ dialog h3 { margin: 0 0 4px; font-size: 20px; letter-spacing: -.025em; }
 #toast.on { opacity: 1; transform: translate(-50%, 0); }
 
 @media (max-width: 1280px) { .logo .product { display: none; } }
-@media (max-width: 1180px) { main { grid-template-columns: 220px 1fr 340px; } #planName { width: 150px; } }
+@media (max-width: 1180px) { main { --lw: 220px; --rw: 340px; } #planName { width: 150px; } }
 @media (max-width: 860px) {
 	html, body { overflow: auto; }
 	.top { height: auto; flex-wrap: wrap; padding: 8px 12px; }
