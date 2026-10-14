@@ -99,3 +99,11 @@ ul.iss .sev-error { border-color: var(--error); } ul.iss .sev-warn { border-colo
 .netcol { border: 1px solid var(--line-2); background: var(--card); padding: 16px 18px; }
 .netcol ol { margin: 10px 0 0; padding-left: 20px; font-size: 14px; display: flex; flex-direction: column; gap: 8px; }
 .build .note { margin-top: 16px; }
+
+/* Text options slide: two ads, primary texts beside headlines. */
+.slide.copyopts .opts { margin-bottom: 18px; }
+.slide.copyopts .opts h3 { font-size: 15px; margin: 0 0 8px; }
+.slide.copyopts .opts-cols { display: grid; grid-template-columns: 3fr 2fr; gap: 24px; }
+.slide.copyopts h4 { font-size: 11px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); margin: 0 0 4px; font-family: var(--mono); font-weight: 500; }
+.slide.copyopts ol { margin: 0; padding-left: 18px; font-size: 13px; line-height: 1.35; }
+.slide.copyopts li { margin: 0 0 3px; }

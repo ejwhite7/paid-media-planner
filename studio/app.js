@@ -4,9 +4,9 @@
 import { PLATFORMS, OBJECTIVES, TYPES, STATUSES, STATUS_LABEL, FIELD_LABEL, newNode, nodeById, childrenOf, campaignOf, subtree, issuesByNode, adsetSummary, money, layoutPlan, firstFormat, uid } from "./model.mjs";
 import { inView, planNetworks } from "./model.mjs";
 import { FUNNEL, FUNNEL_LABEL, NAME_TOKENS, applyNaming, budgetPlan, conventionName, labelOf, normalize } from "./model.mjs";
-import { CATALOG, bidLevel, bidStrategies, budgetLevels, channelPlans, defaultNative, derivedBudget, goalLabel, goalsFor, googleTypes, nativeObjective, objectiveLabel, options } from "./model.mjs";
+import { CATALOG, MEDIA_TYPES, mediaType, mediaLabel, autoPlaced, adFormatLabel, bidLevel, bidStrategies, budgetLevels, channelPlans, defaultNative, derivedBudget, goalLabel, goalsFor, googleTypes, nativeObjective, objectiveLabel, options } from "./model.mjs";
 import { renderMock, esc, formatLabel } from "./mocks.mjs";
-import { renderBrief } from "./brief.mjs";
+import { renderBrief, dismissId } from "./brief.mjs";
 
 const $ = (s, r = document) => r.querySelector(s);
 const $$ = (s, r = document) => [...r.querySelectorAll(s)];
@@ -171,7 +171,9 @@ function mutate(fn, { coalesce = null, rerender = "all" } = {}) {
 	const shaped = normalize(S.plan);
 	if (!shaped.errors.length) S.plan = { ...shaped.plan, id: S.plan.id };
 	scheduleSave();
-	rerender === "all" ? renderAll() : renderLight();
+	if (rerender === "all") renderAll();
+	else if (rerender === "light") renderLight();
+	else renderNodes(), renderLeft();
 	if ($("#settingsDlg").open) renderSettingsOut();
 }
 function pushUndo(snapshot) {
@@ -243,6 +245,7 @@ function setPath(obj, path, value) {
 	let o = obj;
 	for (const k of keys.slice(0, -1)) o = o[k] ??= /^\d+$/.test(k) ? {} : {};
 	o[keys.at(-1)] = value;
+	if (Array.isArray(o)) for (let i = 0; i < o.length; i++) o[i] ??= "";
 }
 const getPath = (obj, path) => path.split(".").reduce((o, k) => o?.[k], obj);
 function ensureCards(ad, i) {
@@ -292,7 +295,7 @@ function nodeHtml(n, issues) {
 	if (n.type === "campaign")
 		body = `<div class="n-line"><span class="k">Objective</span> ${esc(objectiveLabel(n))}</div><div class="n-nets">${d.platforms.map((p) => `<span class="net" style="--c:${PLATFORMS[p].color}">${PLATFORMS[p].short}</span>`).join("") || '<span class="muted">No networks</span>'}</div><div class="n-line muted">${money(d.budget)}</div>`;
 	if (n.type === "adset") body = `<div class="n-line">${esc(adsetSummary(d, campaignOf(S.plan, n)?.data.platforms[0]))}</div>${d.optimization ? `<div class="n-line muted">${esc(goalLabel(S.plan, n))}</div>` : ""}${d.interests.length ? `<div class="n-tags">${d.interests.slice(0, 3).map((i) => `<span>${esc(i)}</span>`).join("")}${d.interests.length > 3 ? `<span>+${d.interests.length - 3}</span>` : ""}</div>` : ""}`;
-	if (n.type === "ad") body = `<div class="n-ad"><div class="n-thumb">${thumb(n)}</div><div class="n-adtext"><div class="n-hl">${esc(d.headline || "—")}</div><div class="n-line muted"><span class="net" style="--c:${PLATFORMS[d.platform]?.color}">${PLATFORMS[d.platform]?.short ?? d.platform}</span> ${esc(PLATFORMS[d.platform]?.formats[d.format]?.name ?? "")}${d.creative === "ugc" ? '<span class="n-ugc">UGC</span>' : ""}</div></div></div>`;
+	if (n.type === "ad") body = `<div class="n-ad"><div class="n-thumb">${thumb(n)}</div><div class="n-adtext"><div class="n-hl">${esc(d.headline || "—")}</div><div class="n-line muted"><span class="net" style="--c:${PLATFORMS[d.platform]?.color}">${PLATFORMS[d.platform]?.short ?? d.platform}</span> ${esc(autoPlaced(S.plan, n) ? mediaLabel(d) : PLATFORMS[d.platform]?.formats[d.format]?.name ?? "")}${d.creative === "ugc" ? '<span class="n-ugc">UGC</span>' : ""}</div></div></div>`;
 	return `<div class="node t-${n.type}${S.sel === n.id ? " sel" : ""}" data-id="${n.id}" style="transform:translate(${pos(n).x}px,${pos(n).y}px)">
 	<div class="n-head"><span class="n-type">${t.label} <i>· ${t.sub}</i></span><span class="n-badges">${badges(issues)}</span></div>
 	<div class="n-body"><div class="n-name">${esc(d.name)}</div>${body}</div>
@@ -345,6 +348,23 @@ const toWorld = (cx, cy) => {
 };
 
 // ---------- left panel: palette, Ask Claude, checks ----------
+// ✕ on any note: removes a check (until its text changes) or resolves a Claude note. Undo or "Restore" brings it back.
+const xBtn = (i) => (READONLY ? "" : `<button class="iss-x" data-dismiss-issue="${esc(dismissId(i))}" title="Remove this note">✕</button>`);
+function dismissIssue(id) {
+	mutate((plan) => {
+		if (id.startsWith("fb:")) {
+			const f = plan.feedback.items[Number(id.slice(3))];
+			if (f) Object.assign(f, { resolved: true, dismissed: true });
+		} else if (!(plan.feedback.dismissed ??= []).includes(id.slice(4))) plan.feedback.dismissed.push(id.slice(4));
+	});
+}
+function restoreIssues() {
+	mutate((plan) => {
+		plan.feedback.dismissed = [];
+		for (const f of plan.feedback.items) if (f.dismissed) delete f.dismissed, (f.resolved = false);
+	});
+}
+const removedCount = () => (S.plan.feedback.dismissed ?? []).length + S.plan.feedback.items.filter((f) => f.dismissed).length;
 function renderLeft() {
 	const issues = issuesByNode(S.plan);
 	const all = Object.entries(issues).flatMap(([node, list]) => list.map((i) => ({ ...i, node: node === "plan" ? null : node })));
@@ -352,12 +372,13 @@ function renderLeft() {
 	const claude = all.filter((i) => i.source === "claude");
 	const row = (i) => {
 		const node = i.node && nodeById(S.plan, i.node);
-		return `<li class="sev-${i.severity}${i.source === "claude" ? " from-claude" : ""}" ${node ? `data-goto="${node.id}"` : ""}>${node ? `<b>${esc(node.data.name)}</b> ` : ""}${esc(i.text)}</li>`;
+		return `<li class="sev-${i.severity}${i.source === "claude" ? " from-claude" : ""}" ${node ? `data-goto="${node.id}"` : ""}>${node ? `<b>${esc(node.data.name)}</b> ` : ""}${esc(i.text)}${xBtn(i)}</li>`;
 	};
 	$("#checks").innerHTML = `
 		${S.plan.feedback.summary ? `<div class="fb-sum"><b>✦ Claude's review</b><p>${esc(S.plan.feedback.summary)}</p></div>` : ""}
 		<div class="chk-counts"><span class="bd bd-error">${n("error")}</span> blockers <span class="bd bd-warn">${n("warn")}</span> to fix <span class="bd bd-info">${n("info")}</span> notes</div>
-		<ul class="iss-list">${[...claude, ...all.filter((i) => i.source !== "claude")].sort((a, b) => SEV_ORDER[a.severity] - SEV_ORDER[b.severity]).slice(0, 40).map(row).join("")}</ul>`;
+		<ul class="iss-list">${[...claude, ...all.filter((i) => i.source !== "claude")].sort((a, b) => SEV_ORDER[a.severity] - SEV_ORDER[b.severity]).slice(0, 40).map(row).join("")}</ul>
+		${removedCount() && !READONLY ? `<button class="linkish" data-restore-issues>Restore ${removedCount()} removed note${removedCount() === 1 ? "" : "s"}</button>` : ""}`;
 }
 const ASK = { generate: "Build from prompt", review: "Review plan", improve: "Improve selection", copy: "Write copy", creative: "Design creative", share: "Publish share link" };
 function renderAsk() {
@@ -472,8 +493,39 @@ function budgetHtml(n) {
 	const der = derivedBudget(S.plan, n);
 	const P = PLATFORMS[der.network];
 	if (!der.monthly) return `<p class="sug muted">Budgets are set per channel. Set ${P.short}'s monthly budget in <a href="#" data-open-settings>Settings</a>.</p>`;
-	const why = `${P.short} ${der.currency} ${der.monthly.toLocaleString()}/mo${der.stage ? ` × ${FUNNEL[der.stage]} ${Math.round(der.share * 100)}%` : ""}${der.peers > 1 ? ` ÷ ${der.peers} campaigns` : ""}`;
-	return `<p class="sug"><span><b>${der.currency} ${der.daily}/day</b> · ${esc(why)}</span><a href="#" data-open-settings>Change</a></p>`;
+	const split = der.peers > 1 ? (der.custom ? ` × ${Math.round(der.part * 100)}% of ${der.stage ? FUNNEL[der.stage] : "the channel"}` : ` ÷ ${der.peers} campaigns`) : "";
+	const why = `${P.short} ${der.currency} ${der.monthly.toLocaleString()}/mo${der.stage ? ` × ${FUNNEL[der.stage]} ${Math.round(der.share * 100)}%` : ""}${split}`;
+	const shareInp = der.peers > 1 ? f(`Share of ${der.stage ? FUNNEL[der.stage] : "channel"} budget % <small class="muted">blank splits the rest evenly</small>`, inp("data.budget.share", n.data.budget.share ?? "", `type="number" min="0" max="100" step="1" data-kind="num" placeholder="${Math.round(der.part * 100)}"`)) : "";
+	return `<p class="sug"><span><b>${der.currency} ${der.daily}/day</b> · ${esc(why)}</span><a href="#" data-open-settings>Change</a></p>${shareInp}`;
+}
+// Under automatic placements an ad's format is what the creative is (video, static, carousel) plus its aspect ratio;
+// the network format behind it (data.format) only sets the mock's shape. With chosen placements it's the placement.
+const ratioOf = (f) => (f.ratio && f.ratio[0] < 100 ? `${f.ratio[0]}:${f.ratio[1]}` : f.name);
+function formatForType(d, type) {
+	const P = PLATFORMS[d.platform];
+	const entries = Object.entries(P.formats);
+	if (type === "carousel") return entries.find(([, f]) => f.cards)?.[0] ?? d.format;
+	if (!P.formats[d.format]?.cards) return d.format;
+	const want = type === "video" ? "9:16" : "4:5";
+	return (entries.find(([, f]) => !f.cards && ratioOf(f) === want) ?? entries.find(([, f]) => !f.cards))?.[0] ?? d.format;
+}
+function formatRow(n, P, formats) {
+	const d = n.data;
+	const network = f("Network", `<input value="${esc(P.name)}" disabled>`);
+	if (!autoPlaced(S.plan, n)) return `<div class="row2">${network}${f("Format", sel("data.format", formats.map(([k, v]) => [k, v.name]), d.format, "data-re"))}</div>`;
+	const type = mediaType(d);
+	const ratios = formats.filter(([, v]) => !v.cards).map(([k, v]) => [k, ratioOf(v)]);
+	return `<div class="row2">${network}${f("Format", sel("data.mediaType", Object.entries(MEDIA_TYPES), type, "data-re"))}</div>
+	${type === "carousel" ? "" : f("Aspect ratio", sel("data.format", ratios, d.format, "data-re"))}`;
+}
+// One field per text option, numbered: the main field is 1, the extras 2…n (Meta's multiple text options).
+function optionFields(d, P, field, extra, control) {
+	const max = P.limits[field];
+	const list = d[extra] ?? [];
+	const label = FIELD_LABEL[field];
+	let h = f(`${label} 1`, control(`data.${field}`, d[field] ?? ""), cnt(d[field], max));
+	for (let i = 0; i < P.options[field] - 1; i++) h += f(`${label} ${i + 2}`, control(`data.${extra}.${i}`, list[i] ?? ""), cnt(list[i] ?? "", max));
+	return h;
 }
 function campaignForm(n) {
 	const d = n.data;
@@ -543,12 +595,12 @@ function adForm(n) {
 	const type = d.platform === "google" ? googleTypes().find((t) => t.id === camp?.data.campaignType) : null;
 	const formats = Object.entries(P.formats).filter(([k]) => !type || type.formats.includes(k));
 	return `
-	<div class="row2">${f("Network", `<input value="${esc(P.name)}" disabled>`)}${f("Format", sel("data.format", formats.map(([k, v]) => [k, v.name]), d.format, "data-re"))}</div>
-	${search ? "" : f("Primary text", area("data.primaryText", d.primaryText, 4), cnt(d.primaryText, L.primaryText))}
-	${f(search ? "Headline 1" : "Headline", inp("data.headline", d.headline), cnt(d.headline, L.headline))}
+	${formatRow(n, P, formats)}
+	${P.options && !search ? optionFields(d, P, "primaryText", "extraPrimaryTexts", (b, v) => area(b, v, 3)) : search ? "" : f("Primary text", area("data.primaryText", d.primaryText, 4), cnt(d.primaryText, L.primaryText))}
+	${P.options && !search ? optionFields(d, P, "headline", "extraHeadlines", inp) : f(search ? "Headline 1" : "Headline", inp("data.headline", d.headline), cnt(d.headline, L.headline))}
 	${search ? f("Headline 2", inp("data.headline2", d.headline2), cnt(d.headline2, L.headline2)) : ""}
 	${search ? f("More headlines <small class=\"muted\">one per line, up to 13 more, 30 characters each</small>", `<textarea data-bind="data.extraHeadlines" data-kind="lines" rows="4">${esc(d.extraHeadlines.join("\n"))}</textarea>`) : ""}
-	${f(search ? "Description 1" : "Description", area("data.description", d.description, 2), cnt(d.description, L.description))}
+	${P.options && !search ? optionFields(d, P, "description", "extraDescriptions", inp) : f(search ? "Description 1" : "Description", area("data.description", d.description, 2), cnt(d.description, L.description))}
 	${search ? f("More descriptions <small class=\"muted\">one per line, up to 3 more, 90 characters each</small>", `<textarea data-bind="data.extraDescriptions" data-kind="lines" rows="3">${esc(d.extraDescriptions.join("\n"))}</textarea>`) : ""}
 	${search ? `<div class="row2">${f("Path 1", inp("data.path1", d.path1, 'maxlength="15"'), cnt(d.path1, 15))}${f("Path 2", inp("data.path2", d.path2, 'maxlength="15"'), cnt(d.path2, 15))}</div>` : ""}
 	<div class="row2">${search ? "" : f("Call to action", sel("data.cta", [...P.ctas, ...(P.ctas.includes(d.cta) ? [] : [d.cta])].map((c) => [c, P.ctas.includes(c) ? c : `${c} (not offered)`]), d.cta))}${f("Display URL", inp("data.displayUrl", d.displayUrl))}</div>
@@ -574,10 +626,26 @@ function setNetwork(plan, campId, net) {
 function fmtChoices(n) {
 	return netOptions(n).flatMap((p) => Object.entries(PLATFORMS[p].formats).map(([k, v]) => ({ p, k, label: `${PLATFORMS[p].short} · ${v.name}` })));
 }
+// Under automatic placements the mock's chips pick what the creative is and its shape, not a placement.
+function kindChoices(n) {
+	const P = PLATFORMS[n.data.platform];
+	const all = Object.entries(P.formats);
+	const order = { "9:16": 0, "4:5": 1, "1:1": 2 };
+	const flat = all.filter(([, f]) => !f.cards).sort(([, a], [, b]) => (order[ratioOf(a)] ?? 9) - (order[ratioOf(b)] ?? 9));
+	const statics = [...flat].sort(([, a], [, b]) => (ratioOf(a) === "4:5" ? -1 : ratioOf(b) === "4:5" ? 1 : 0));
+	return [
+		...flat.map(([k, f]) => ({ type: "video", k, label: `Video ${ratioOf(f)}` })),
+		...statics.map(([k, f]) => ({ type: "static", k, label: `Static ${ratioOf(f)}` })),
+		...all.filter(([, f]) => f.cards).map(([k, f]) => ({ type: "carousel", k, label: `Carousel ${ratioOf(f)}` })),
+	];
+}
 function mockTab(n) {
 	const d = n.data;
+	const chips = autoPlaced(S.plan, n)
+		? kindChoices(n).map((c) => `<button class="chip${c.type === mediaType(d) && c.k === d.format ? " on" : ""}" style="--c:${PLATFORMS[d.platform].color}" data-setkind="${c.type}:${c.k}">${esc(c.label)}</button>`).join("")
+		: fmtChoices(n).map((c) => `<button class="chip${c.p === d.platform && c.k === d.format ? " on" : ""}" style="--c:${PLATFORMS[c.p].color}" data-setfmt="${c.p}:${c.k}">${esc(c.label)}</button>`).join("");
 	return `
-	<div class="fmt-chips">${fmtChoices(n).map((c) => `<button class="chip${c.p === d.platform && c.k === d.format ? " on" : ""}" style="--c:${PLATFORMS[c.p].color}" data-setfmt="${c.p}:${c.k}">${esc(c.label)}</button>`).join("")}</div>
+	<div class="fmt-chips">${chips}</div>
 	<p class="muted small">Click any text in the mock to rewrite it. Drop an image or video on the grey block, or click it to choose a file.</p>
 	<div class="mock-stage">${mockHost(n, d.platform, d.format, true)}</div>
 	<div class="limits" data-limits="${n.id}">${limitsHtml(n)}</div>`;
@@ -591,11 +659,10 @@ function limitsHtml(n) {
 		.join("");
 }
 function reviewTab(n, items) {
-	const fb = S.plan.feedback.items;
 	return `
 	<div class="row2">${f("Status", sel("status", STATUSES.map((s) => [s, STATUS_LABEL[s]]), n.status, "data-re"))}${f("Assignee", inp("assignee", n.assignee, 'placeholder="name"'))}</div>
 	<h4>Feedback</h4>
-	${items.length ? `<ul class="iss-list big">${items.sort((a, b) => SEV_ORDER[a.severity] - SEV_ORDER[b.severity]).map((i) => `<li class="sev-${i.severity}${i.source === "claude" ? " from-claude" : ""}"><div>${i.source === "claude" ? "<b>✦</b> " : ""}${esc(i.text)}</div>${i.suggestion ? `<div class="sugg">→ ${esc(i.suggestion)}</div>` : ""}${i.source === "claude" ? `<button data-resolve="${fb.indexOf(fb.find((x) => x.text === i.text && x.node === n.id))}">Resolve</button>` : ""}</li>`).join("")}</ul>` : `<p class="muted small">No open feedback. Use “Review plan” on the left to ask Claude.</p>`}
+	${items.length ? `<ul class="iss-list big">${items.sort((a, b) => SEV_ORDER[a.severity] - SEV_ORDER[b.severity]).map((i) => `<li class="sev-${i.severity}${i.source === "claude" ? " from-claude" : ""}"><div>${i.source === "claude" ? "<b>✦</b> " : ""}${esc(i.text)}</div>${i.suggestion ? `<div class="sugg">→ ${esc(i.suggestion)}</div>` : ""}${i.source === "claude" ? `<button data-resolve="${i.fb}">Resolve</button>` : ""}${xBtn(i)}</li>`).join("")}</ul>` : `<p class="muted small">No open feedback. Use “Review plan” on the left to ask Claude.</p>`}
 	<h4>Comments</h4>
 	<ul class="comments">${n.comments.map((c) => `<li><b>${esc(c.author)}</b> <small class="muted">${new Date(c.at).toLocaleString(undefined, { dateStyle: "short", timeStyle: "short" })}</small><p>${esc(c.text)}</p></li>`).join("") || '<li class="muted small">No comments yet.</li>'}</ul>
 	<textarea id="commentText" rows="2" placeholder="Comment as ${esc(me())}…"></textarea>
@@ -603,7 +670,7 @@ function reviewTab(n, items) {
 }
 function mockHost(n, platform, format, primary) {
 	return `<figure class="mockhost${primary ? "" : " alt"}" data-ad="${n.id}" data-platform="${platform}" data-format="${format}">
-		<figcaption><b>${esc(n.data.name)}</b><span>${esc(formatLabel(platform, format))}</span>${primary ? "" : `<button data-use="${platform}:${format}">Use</button>`}</figcaption>
+		<figcaption><b>${esc(n.data.name)}</b><span>${esc(primary ? adFormatLabel(S.plan, n) : formatLabel(platform, format))}</span>${primary ? "" : `<button data-use="${platform}:${format}">Use</button>`}</figcaption>
 		${renderMock(n.data, S.plan.brand, { editable: !READONLY, platform, format })}</figure>`;
 }
 
@@ -627,8 +694,10 @@ function renderMocks() {
 }
 function renderBriefView() {
 	const v = $("#briefView");
+	// Don't rebuild under someone typing in the brief: they'd lose the caret. It catches up on blur.
+	if (v.contains(document.activeElement) && document.activeElement.matches(".ed")) return;
 	const top = v.scrollTop;
-	v.innerHTML = `<div class="brief-bar"><span class="muted">This is what the hand-off pack shows. Double-click any part to edit it on the canvas.</span><button data-share>Share…</button></div>${renderBrief(S.plan, { interactive: true })}`;
+	v.innerHTML = `<div class="brief-bar"><span class="muted">This is what the hand-off pack shows. ${READONLY ? "Double-click any part to open it on the canvas." : "Click any outlined text to edit it here; double-click a heading to open it on the canvas."}</span>${removedCount() && !READONLY ? `<button data-restore-issues>Restore ${removedCount()} removed</button>` : ""}<button data-share>Share…</button></div>${renderBrief(S.plan, { interactive: true, editable: !READONLY })}`;
 	const key = `cc-check-${S.plan.id}`;
 	const ticks = store.get(key, {});
 	for (const box of $$("[data-check]", v)) {
@@ -874,6 +943,7 @@ function onField(e) {
 			const node = nodeById(plan, n.id);
 			setPath(node, el.dataset.bind, bindValue(el));
 			if (el.dataset.bind === "data.platform") node.data.format = firstFormat(node.data.platform);
+			if (el.dataset.bind === "data.mediaType") node.data.format = formatForType(node.data, el.value);
 		},
 		{ coalesce: `${n.id}.${el.dataset.bind}`, rerender: re ? "all" : "light" },
 	);
@@ -907,11 +977,17 @@ document.addEventListener("click", async (e) => {
 	if (b("[data-del]")) return removeNode(S.sel);
 	if ((el = b("[data-net]")))
 		return mutate((plan) => setNetwork(plan, S.sel, el.dataset.net));
+	if ((el = b("[data-setkind]"))) {
+		const [type, fmt] = el.dataset.setkind.split(":");
+		return mutate((plan) => Object.assign(nodeById(plan, S.sel).data, { mediaType: type, format: fmt }));
+	}
 	if ((el = b("[data-setfmt]")) || (el = b("[data-use]"))) {
 		const [p, fmt] = (el.dataset.setfmt ?? el.dataset.use).split(":");
 		const id = el.closest("[data-ad]")?.dataset.ad ?? S.sel;
 		return mutate((plan) => Object.assign(nodeById(plan, id).data, { platform: p, format: fmt }));
 	}
+	if ((el = b("[data-dismiss-issue]"))) return dismissIssue(el.dataset.dismissIssue);
+	if (b("[data-restore-issues]")) return restoreIssues();
 	if ((el = b("[data-goto]"))) {
 		if (S.view !== "canvas") setView("canvas");
 		return select(el.dataset.goto);
@@ -1011,7 +1087,34 @@ document.addEventListener("input", (e) => {
 	const lim = $(`[data-limits="${host.dataset.ad}"]`);
 	if (lim) lim.innerHTML = limitsHtml(nodeById(S.plan, host.dataset.ad));
 });
+// In-place editing in the Brief view: plan text, campaign and ad set notes, ad copy.
+document.addEventListener("input", (e) => {
+	const ed = e.target.closest?.("#briefView .ed[data-bfield]");
+	if (!ed || READONLY) return;
+	const { bnode, bfield } = ed.dataset;
+	const value = ed.innerText.replace(/\n+$/, "");
+	mutate(
+		(plan) => {
+			const target = bnode === "plan" ? plan : nodeById(plan, bnode)?.data;
+			if (target) setPath(target, bfield, value);
+		},
+		{ coalesce: `brief.${bnode}.${bfield}`, rerender: "none" },
+	);
+	const num = ed.closest("tr")?.querySelector("td.num");
+	if (num) {
+		const max = Number(num.dataset.max) || 0;
+		num.textContent = max ? `${value.length}/${max}` : String(value.length);
+		num.classList.toggle("over", !!max && value.length > max);
+	}
+	if (bnode === "plan" && bfield === "name") renderTop();
+});
+document.addEventListener("focusout", (e) => {
+	if (e.target.closest?.("#briefView .ed[data-bfield]")) setTimeout(() => S.view === "brief" && renderBriefView());
+});
 document.addEventListener("keydown", (e) => {
+	const bed = e.target.closest?.("#briefView .ed[data-bfield]");
+	if (bed && e.key === "Enter" && !bed.hasAttribute("data-multi")) return e.preventDefault(), bed.blur();
+	if (bed && e.key === "Escape") return bed.blur();
 	const ed = e.target.closest?.(".ed[data-field]");
 	if (ed && e.key === "Enter" && !MULTILINE.has(ed.dataset.field)) {
 		e.preventDefault();
@@ -1038,6 +1141,7 @@ document.addEventListener("change", (e) => {
 	}
 });
 document.addEventListener("dblclick", (e) => {
+	if (e.target.closest?.("#briefView .ed")) return;
 	const part = e.target.closest?.("#briefView [id^='b-']");
 	if (part && nodeById(S.plan, part.id.slice(2))) {
 		setView("canvas");

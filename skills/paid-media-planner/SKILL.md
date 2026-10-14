@@ -76,7 +76,7 @@ Snapchat: a range; TikTok, LinkedIn, Pinterest and Google: age groups; X: from/t
 genders, targeting dimensions and placements. Use its ids, never invented values. LinkedIn's Job applicants objective
 can't target by age, and a special ad category (Meta, TikTok) means age and gender can't be narrowed. For Google, pick
 the campaign type first: it decides the ad formats and bid strategies, and locations and languages go on the campaign.
-Responsive search ads take 3–15 headlines (headline, headline2, extraHeadlines) and 2–4 descriptions. A value marked
+Responsive search ads take 3–15 headlines (headline, headline2, extraHeadlines) and 2–4 descriptions. Meta ads take up to 5 primary texts, headlines and descriptions (Meta's multiple text options): the main field plus `extraPrimaryTexts`, `extraHeadlines` and `extraDescriptions`, up to 4 more each. Make each option a different hook on the same message, not a different message, so the ad still reads as one idea. Text options can't be added to an existing post. A value marked
 `confirm: true` exists but wasn't verified: say so where it matters.
 
 The request block repeats the settings in plain words: the naming convention, what each channel budget can carry, and the

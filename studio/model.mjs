@@ -42,6 +42,8 @@ export const PLATFORMS = {
 		},
 		ctas: ["Learn more", "Shop now", "Sign up", "Get quote", "Book now", "Contact us", "Download", "Subscribe", "Get offer"],
 		limits: { primaryText: 125, headline: 40, description: 30 },
+		// Text options: Meta takes up to 5 primary texts, headlines and descriptions per ad and picks per person.
+		options: { primaryText: 5, headline: 5, description: 5 },
 	},
 	google: {
 		name: "Google Ads",
@@ -162,6 +164,7 @@ export function nodeDefaults(type, platform = "meta") {
 		media: [],
 		cards: [],
 		// Google responsive search ads: headline and headline2 plus up to 13 more headlines and 3 more descriptions.
+		extraPrimaryTexts: [],
 		extraHeadlines: [],
 		extraDescriptions: [],
 		path1: "",
@@ -171,6 +174,8 @@ export function nodeDefaults(type, platform = "meta") {
 		// placeholder and notes hold the creator brief. prompt: the generation prompt or shot list for produced creative.
 		creative: "produced",
 		prompt: "",
+		// video | static | carousel, or "" to infer it from the media, the format and who makes it (see mediaType).
+		mediaType: "",
 	};
 }
 
@@ -211,6 +216,7 @@ export function normalize(input) {
 	const base = newPlan(str(input.name, "Untitled plan"));
 	const plan = { ...base, ...input, brand: { ...base.brand, ...(input.brand ?? {}) }, feedback: { ...base.feedback, ...(input.feedback ?? {}) } };
 	plan.feedback.items = Array.isArray(plan.feedback.items) ? plan.feedback.items : [];
+	plan.feedback.dismissed = Array.isArray(plan.feedback.dismissed) ? plan.feedback.dismissed.filter((k) => typeof k === "string") : [];
 	plan.settings = normalizeSettings(input.settings);
 	plan.activity = Array.isArray(plan.activity) ? plan.activity.slice(-200) : [];
 	if (!STATUSES.includes(plan.status)) plan.status = "draft";
@@ -225,6 +231,7 @@ export function normalize(input) {
 		ids.add(id);
 		const platform = n.data?.platform && PLATFORMS[n.data.platform] ? n.data.platform : "meta";
 		const data = { ...nodeDefaults(n.type, platform), ...(n.data ?? {}) };
+		if (n.type === "ad" && !MEDIA_TYPES[data.mediaType]) data.mediaType = "";
 		if (n.type === "campaign") {
 			data.platforms = arr(data.platforms).filter((p) => PLATFORMS[p]);
 			const net = data.platforms[0] ?? "meta";
@@ -232,6 +239,7 @@ export function normalize(input) {
 			if (!native) errors.push(`${id}: unknown objective "${data.nativeObjective || data.objective}" (use one of ${net}'s: ${CATALOG[net].objectives.map((o) => o.id).join(", ")})`);
 			else Object.assign(data, { nativeObjective: native.id, objective: native.generic });
 			data.budget = { ...nodeDefaults("campaign", net).budget, ...(data.budget ?? {}) };
+			if (data.budget.share !== undefined) data.budget.share = Number(data.budget.share) > 0 ? Math.min(100, Number(data.budget.share)) : "";
 			if (!budgetLevels(net).some(([k]) => k === data.budget.level)) data.budget.level = budgetLevels(net)[0][0];
 			for (const k of ["networks", "locations", "languages"]) data[k] = arr(data[k]);
 			if (net === "google" && !googleTypes().some((t) => t.id === data.campaignType)) data.campaignType = "SEARCH";
@@ -251,6 +259,7 @@ export function normalize(input) {
 			else if (!PLATFORMS[data.platform].formats[data.format]) data.format = firstFormat(data.platform);
 			data.media = Array.isArray(data.media) ? data.media.filter((m) => m && typeof m.src === "string") : [];
 			data.cards = Array.isArray(data.cards) ? data.cards : [];
+			data.extraPrimaryTexts = arr(data.extraPrimaryTexts).slice(0, 4);
 			data.extraHeadlines = arr(data.extraHeadlines).slice(0, 13);
 			data.extraDescriptions = arr(data.extraDescriptions).slice(0, 2);
 			if (n.data?.creative === undefined) data.creative = /\b(ugc|creator|influencer)\b/i.test(`${data.name} ${data.notes}`) ? "ugc" : "produced";
@@ -288,6 +297,36 @@ export function normalize(input) {
 
 export const childrenOf = (plan, id) => plan.nodes.filter((n) => n.parent === id);
 export const nodeById = (plan, id) => plan.nodes.find((n) => n.id === id);
+
+// Every text option an ad carries for a field: the main one first, then the extras (Meta's multiple text options).
+export function textOptions(d, field) {
+	const extra = { primaryText: d.extraPrimaryTexts, headline: d.extraHeadlines, description: d.extraDescriptions }[field] ?? [];
+	return [d[field], ...(PLATFORMS[d.platform]?.options && d.format !== "search" ? extra ?? [] : [])].filter((v) => String(v ?? "").trim());
+}
+// What the creative is, independent of where it runs: video, static or carousel. Set on the ad, or inferred.
+export const MEDIA_TYPES = { video: "Video", static: "Static", carousel: "Carousel" };
+const VIDEO_FORMATS = new Set(["ig_story", "infeed", "youtube", "single"]);
+export function mediaType(d) {
+	if (MEDIA_TYPES[d.mediaType]) return d.mediaType;
+	if (PLATFORMS[d.platform]?.formats[d.format]?.cards) return "carousel";
+	const kind = d.media?.find((m) => m?.kind)?.kind;
+	if (kind) return kind === "video" ? "video" : "static";
+	return d.creative === "ugc" || VIDEO_FORMATS.has(d.format) ? "video" : "static";
+}
+// "Video · 9:16": the creative spec without a placement.
+export function mediaLabel(d) {
+	const r = PLATFORMS[d.platform]?.formats[d.format]?.ratio;
+	return `${MEDIA_TYPES[mediaType(d)]}${r && r[0] < 100 ? ` · ${r[0]}:${r[1]}` : ""}`;
+}
+// True when the ad's ad set leaves placement to the network (Meta's Advantage+ placements and the like): the format
+// is then a creative spec, not a placement decision.
+export function autoPlaced(plan, ad) {
+	const s = nodeById(plan, ad.parent);
+	return !!CATALOG[ad.data.platform]?.placements?.automatic && (s?.data.placements ?? "automatic") === "automatic";
+}
+// How an ad's format reads in the brief, slides and names: the creative spec under automatic placements, otherwise the
+// placement format.
+export const adFormatLabel = (plan, ad) => `${PLATFORMS[ad.data.platform]?.short ?? ad.data.platform} · ${autoPlaced(plan, ad) ? mediaLabel(ad.data) : PLATFORMS[ad.data.platform]?.formats[ad.data.format]?.name ?? ad.data.format}`;
 export function campaignOf(plan, node) {
 	let n = node;
 	for (let i = 0; n && n.type !== "campaign" && i < 3; i++) n = nodeById(plan, n.parent);
@@ -315,8 +354,6 @@ export function lint(plan) {
 			add(null, "warn", `No ${short} budget: set the channel's monthly budget in Settings.`);
 			continue;
 		}
-		if (mine("adset") > b.adsets) add(null, "warn", `${mine("adset")} ${short} ad sets on ${b.currency} ${b.monthly.toLocaleString()}/month: about ${b.adsets} can each get enough spend to leave learning. Merge or pause the rest.`);
-		if (mine("ad") > Math.ceil(b.ads * 1.25)) add(null, "warn", `${mine("ad")} ${short} ads on this budget: about ${b.ads} can each get enough spend to read a result. Test fewer, more different angles.`);
 	}
 	const want = (list, v) => !v || list.some((o) => o.id === v);
 	for (const n of plan.nodes) {
@@ -416,6 +453,13 @@ export function lint(plan) {
 					for (const h of d.extraHeadlines) if (str(h).length > 30) add(n.id, "warn", `Headline "${h.slice(0, 20)}…" is over 30 characters.`);
 					for (const h of d.extraDescriptions) if (str(h).length > 90) add(n.id, "warn", `A description is over 90 characters.`);
 				}
+				if (p.options && d.format !== "search") {
+					const extra = { primaryText: d.extraPrimaryTexts, headline: d.extraHeadlines, description: d.extraDescriptions };
+					for (const [field, list] of Object.entries(extra)) {
+						if (list.length > (p.options[field] ?? 1) - 1) add(n.id, "warn", `${p.short} takes up to ${p.options[field]} ${FIELD_LABEL[field].toLowerCase()} options; this has ${list.length + 1}.`);
+						for (const v of list) if (str(v).length > p.limits[field]) add(n.id, "warn", `${FIELD_LABEL[field]} option "${str(v).slice(0, 24)}…" is ${str(v).length} characters; ${p.short} shows ${p.limits[field]}.`);
+					}
+				}
 				if (!p.ctas.includes(d.cta)) add(n.id, "warn", `"${d.cta}" isn't one of ${p.short}'s call-to-action buttons (${p.ctas.slice(0, 6).join(", ")}…).`);
 				const f = p.formats[d.format];
 				if (f && f.media !== false && !d.media.length && !(f.cards && d.cards.some((c) => c.src))) add(n.id, "info", "Creative is still a placeholder.");
@@ -427,10 +471,15 @@ export function lint(plan) {
 	return out;
 }
 
-// Issues per node, merging the checks with Claude's open feedback.
+// Issues per node, merging the checks with Claude's open feedback. Checks someone removed (feedback.dismissed, keyed by
+// issueKey) stay hidden while their text is unchanged; removed feedback items are resolved.
+export const issueKey = (i) => `${i.node ?? "plan"}|${i.text}`;
 export function issuesByNode(plan) {
 	const map = {};
-	for (const i of [...lint(plan), ...plan.feedback.items.filter((f) => !f.resolved).map((f) => ({ ...f, source: "claude" }))]) (map[i.node ?? "plan"] ??= []).push(i);
+	const gone = new Set(plan.feedback.dismissed ?? []);
+	const checks = lint(plan).filter((i) => !gone.has(issueKey(i)));
+	const notes = plan.feedback.items.map((f, fb) => ({ ...f, fb, source: "claude" })).filter((f) => !f.resolved);
+	for (const i of [...checks, ...notes]) (map[i.node ?? "plan"] ??= []).push(i);
 	return map;
 }
 
@@ -563,7 +612,7 @@ export function nameTokens(plan, node) {
 	};
 	if (node.type === "campaign") t.seq = cSeq;
 	if (node.type === "adset") Object.assign(t, { seq: aSeq, geo: (CATALOG[camp?.data.platforms[0]]?.geoLevel === "campaign" ? camp.data.locations : d.locations)?.[0] ?? "", optimization: shortOpt(goalLabel(plan, node).replace(/^Maximize (number of )?/i, "")) });
-	if (node.type === "ad") Object.assign(t, { seq: `${aSeq}.${letter}`, letter, format: PLATFORMS[d.platform]?.formats[d.format]?.name.split(" (")[0] ?? "", cta: d.cta ?? "" });
+	if (node.type === "ad") Object.assign(t, { seq: `${aSeq}.${letter}`, letter, format: autoPlaced(plan, node) ? mediaLabel(d).replace(" · ", " ") : PLATFORMS[d.platform]?.formats[d.format]?.name.split(" (")[0] ?? "", cta: d.cta ?? "" });
 	return t;
 }
 // Fills a template. Empty tokens drop out with their separator, so "{seq} // {funnel} // {label}" never shows "//  //".
@@ -645,9 +694,16 @@ export function derivedBudget(plan, camp) {
 	const weight = (g) => (g === "_" ? (staged ? 0 : 1) : s.funnel[g] ?? 0);
 	const total = groups.reduce((a, g) => a + weight(g), 0);
 	const key = camp.data.funnel || "_";
-	const peers = peersOf(key).length || 1;
-	const daily = monthly && total ? (((monthly * 12) / 365) * weight(key)) / total / peers : 0;
-	return { network: net, monthly, daily: Math.round(daily), currency: s.budget.currency, stage: key === "_" ? null : key, share: total ? weight(key) / total : 0, peers };
+	const peerList = peersOf(key);
+	const peers = peerList.length || 1;
+	const stageDaily = monthly && total ? (((monthly * 12) / 365) * weight(key)) / total : 0;
+	// A campaign's share of its stage: budget.share (%) where set; campaigns without one split what's left evenly. Shares
+	// over 100% in total are scaled down to fit.
+	const pct = (n) => (Number(n.data.budget?.share) > 0 ? Number(n.data.budget.share) : 0);
+	const set = peerList.reduce((a, n) => a + pct(n), 0);
+	const unset = peerList.filter((n) => !pct(n)).length;
+	const part = pct(camp) ? (set > 100 || !unset ? pct(camp) / set : pct(camp) / 100) : set >= 100 ? 0 : (1 - set / 100) / (unset || 1);
+	return { network: net, monthly, daily: Math.round(stageDaily * part), currency: s.budget.currency, stage: key === "_" ? null : key, share: total ? weight(key) / total : 0, peers, part, custom: set > 0 };
 }
 export const suggestedBudget = (plan, camp) => {
 	const d = derivedBudget(plan, camp);

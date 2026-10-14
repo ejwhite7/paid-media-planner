@@ -272,3 +272,8 @@ body.web .top .logo { display: none; }
 .top #planName { flex-shrink: 1; min-width: 90px; }
 .top .grow { flex-shrink: 1; min-width: 0; }
 @media (max-width: 1100px) { .top #planStatus { width: 130px; } .views button { padding: 6px 10px; } }
+.iss-list li { position: relative; }
+.iss-list li:has(.iss-x) { padding-right: 26px; }
+.iss-list li .iss-x { position: absolute; top: 3px; right: 3px; margin: 0; border: 0; background: none; color: var(--muted); cursor: pointer; font-size: 11px; padding: 2px 5px; line-height: 1; }
+.iss-list li .iss-x:hover { background: rgba(0,0,0,.06); }
+.linkish { margin-top: 8px; border: 0; background: none; padding: 0; color: var(--muted); text-decoration: underline; cursor: pointer; font-size: 12px; }

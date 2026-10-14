@@ -2,8 +2,8 @@
 // walks the structure top-down: cover, brief and budget, the structure at a glance, then each campaign (objective,
 // budget, its ad sets), each ad set (targeting), its ads as native mockups, open issues, and the build checklist.
 // Pure: returns HTML. tools/canvas.mjs wraps it in a page with the fonts and styles, and prints it to PDF.
-import { FUNNEL, FUNNEL_LABEL, OBJECTIVES, PLATFORMS, STATUS_LABEL, FIELD_LABEL, adsetFacts, adsetSummary, budgetPlan, campaignFacts, channelPlans, childrenOf, goalLabel, issuesByNode, money, objectiveLabel } from "./model.mjs";
-import { esc, formatLabel, renderMock } from "./mocks.mjs";
+import { FUNNEL, FUNNEL_LABEL, OBJECTIVES, PLATFORMS, STATUS_LABEL, FIELD_LABEL, adFormatLabel, textOptions, adsetFacts, adsetSummary, budgetPlan, campaignFacts, channelPlans, childrenOf, goalLabel, issuesByNode, money, objectiveLabel } from "./model.mjs";
+import { esc, renderMock } from "./mocks.mjs";
 
 const chunk = (a, n) => Array.from({ length: Math.ceil(a.length / n) }, (_, i) => a.slice(i * n, i * n + n));
 const list = (a) => (a?.length ? a.map(esc).join(", ") : '<span class="dim">—</span>');
@@ -40,7 +40,7 @@ export function renderSlides(plan) {
 		<div class="cv-stats">
 			<div><b>${camps.length}</b><span>campaigns</span></div><div><b>${sets.length}</b><span>ad sets</span></div><div><b>${ads.length}</b><span>ads</span></div>
 			<div><b>${nets.length}</b><span>${nets.length === 1 ? "network" : "networks"}</span></div>
-			<div><b>${bp.monthly ? `${cur} ${bp.monthly.toLocaleString()}` : daily ? `${camps[0].data.budget.currency} ${daily.toLocaleString()}` : "—"}</b><span>${bp.monthly ? "test budget / month" : "daily budget"}</span></div>
+			<div><b>${bp.monthly ? `${cur} ${bp.monthly.toLocaleString()}` : daily ? `${camps[0].data.budget.currency} ${daily.toLocaleString()}` : "—"}</b><span>${bp.monthly ? "budget / month" : "daily budget"}</span></div>
 		</div></section>`);
 
 	// 2. Brief and budget
@@ -49,11 +49,11 @@ export function renderSlides(plan) {
 		.map((s) => `<div class="seg fun-${s.key}" style="flex:${s.weight}"><b>${s.label} ${s.weight}%</b><span>${bp.monthly ? `${cur} ${Math.round(s.monthly).toLocaleString()}/mo` : ""}</span></div>`)
 		.join("");
 	const budgetBlock = `<div class="budget"><h3>Budget by funnel stage</h3><div class="bar">${bar}</div>
-		${channelPlans(plan).filter((b) => b.monthly).length ? `<table class="t"><thead><tr><th>Channel</th><th>Monthly</th><th>Daily</th><th>Testable</th></tr></thead><tbody>${channelPlans(plan).filter((b) => b.monthly).map((b) => `<tr><td>${netDots([b.network])}</td><td>${cur} ${b.monthly.toLocaleString()}</td><td>${cur} ${Math.round(b.daily)}</td><td>${b.adsets} ${PLATFORMS[b.network].levels[1].toLowerCase()}s × ~${Math.round(b.ads / Math.max(b.adsets, 1))} ads</td></tr>`).join("")}</tbody></table>` : ""}
-		<table class="t"><thead><tr><th>Stage</th><th>Daily</th><th>Testable</th><th>Campaigns</th></tr></thead><tbody>${bp.stages
-			.map((s) => `<tr><td>${funnelTag(s.key)} <span class="dim">${esc(FUNNEL_LABEL[s.key].split(": ")[1] ?? "")}</span></td><td>${bp.monthly ? `${cur} ${Math.round(s.daily)}` : "—"}</td><td>${s.adsets ? `${s.adsets} ad set${s.adsets > 1 ? "s" : ""} × ${s.ads} ads` : bp.monthly && s.weight ? "Fold into another stage" : "—"}</td><td>${camps.filter((c) => c.data.funnel === s.key).length}</td></tr>`)
+		${channelPlans(plan).filter((b) => b.monthly).length ? `<table class="t"><thead><tr><th>Channel</th><th>Monthly</th><th>Daily</th></tr></thead><tbody>${channelPlans(plan).filter((b) => b.monthly).map((b) => `<tr><td>${netDots([b.network])}</td><td>${cur} ${b.monthly.toLocaleString()}</td><td>${cur} ${Math.round(b.daily)}</td></tr>`).join("")}</tbody></table>` : ""}
+		<table class="t"><thead><tr><th>Stage</th><th>Daily</th><th>Campaigns</th></tr></thead><tbody>${bp.stages
+			.map((s) => `<tr><td>${funnelTag(s.key)} <span class="dim">${esc(FUNNEL_LABEL[s.key].split(": ")[1] ?? "")}</span></td><td>${bp.monthly ? `${cur} ${Math.round(s.daily)}` : "—"}</td><td>${camps.filter((c) => c.data.funnel === s.key).length}</td></tr>`)
 			.join("")}</tbody></table>
-		${bp.monthly ? `<p class="note">The budget can properly test about <b>${bp.campaigns} campaigns, ${bp.adsets} ad sets and ${bp.ads} ads</b> (${cur} ${Math.round(bp.perAdsetDaily)}+/day per ad set). This plan has ${camps.length}, ${sets.length} and ${ads.length}.</p>${bp.notes.map((n) => `<p class="note warn">${esc(n)}</p>`).join("")}` : `<p class="note">No test budget set. Campaign budgets total ${daily ? `${camps[0].data.budget.currency} ${daily.toLocaleString()}/day` : "nothing yet"}.</p>`}</div>`;
+		${bp.monthly ? "" : `<p class="note">No channel budget set. Campaign budgets total ${daily ? `${camps[0].data.budget.currency} ${daily.toLocaleString()}/day` : "nothing yet"}.</p>`}</div>`;
 	slide("two", "The brief", `<div class="col">${plan.brief ? fitText(plan.brief) : '<p class="dim">No brief written yet.</p>'}${plan.settings?.context?.length ? `<p class="note">Grounded in: ${plan.settings.context.map((c) => esc(c.name)).join(", ")}</p>` : ""}</div><div class="col">${budgetBlock}</div>`, { eyebrow: "Context" });
 
 	// 3. Structure at a glance, paginated by campaign
@@ -112,9 +112,9 @@ export function renderSlides(plan) {
 				`<div class="col"><table class="kv">
 					${kvRows(adsetFacts(plan, s))}
 				</table>${a.notes ? `<div class="notes">${esc(a.notes.slice(0, 420))}</div>` : ""}</div>
-				<div class="col"><h3>${sAds.length} ad${sAds.length === 1 ? "" : "s"} testing</h3>${sAds
+				<div class="col"><h3>${sAds.length} ad${sAds.length === 1 ? "" : "s"}</h3>${sAds
 					.slice(0, 6)
-					.map((ad) => `<div class="card ad-line"><b>${esc(ad.data.name)}</b><div>${esc(ad.data.headline || ad.data.primaryText.slice(0, 90))}</div><div class="dim">${esc(formatLabel(ad.data.platform, ad.data.format))}${ad.data.creative === "ugc" ? " · creator (UGC)" : ""}</div></div>`)
+					.map((ad) => `<div class="card ad-line"><b>${esc(ad.data.name)}</b><div>${esc(ad.data.headline || ad.data.primaryText.slice(0, 90))}</div><div class="dim">${esc(adFormatLabel(plan, ad))}${ad.data.creative === "ugc" ? " · creator (UGC)" : ""}</div></div>`)
 					.join("")}${sAds.length > 6 ? `<p class="dim">+ ${sAds.length - 6} more</p>` : ""}</div>`,
 				{ eyebrow: `Ad set · ${esc(d.name)}`, tag: `<div class="tags">${funnelTag(d.funnel)}</div>` },
 			);
@@ -128,51 +128,27 @@ export function renderSlides(plan) {
 						.map((ad) => {
 							const P = PLATFORMS[ad.data.platform];
 							const over = Object.entries(P.limits).filter(([k, max]) => k !== "brandName" && String(ad.data[k] ?? "").length > max);
-							return `<figure><div class="mbox"><div class="fit">${renderMock(ad.data, plan.brand)}</div></div><figcaption><b>${esc(ad.data.name)}</b><span>${esc(formatLabel(ad.data.platform, ad.data.format))} · ${esc(ad.data.cta)}${ad.data.creative === "ugc" ? ' · <em>creator (UGC)</em>' : ""}</span><span class="url">${esc(ad.data.url)}</span>${over.length ? `<span class="warn">${over.map(([k, max]) => `${FIELD_LABEL[k]} over ${max}`).join(", ")}</span>` : ""}</figcaption></figure>`;
+							return `<figure><div class="mbox"><div class="fit">${renderMock(ad.data, plan.brand)}</div></div><figcaption><b>${esc(ad.data.name)}</b><span>${esc(adFormatLabel(plan, ad))} · ${esc(ad.data.cta)}${ad.data.creative === "ugc" ? ' · <em>creator (UGC)</em>' : ""}</span><span class="url">${esc(ad.data.url)}</span>${textOptions(ad.data, "primaryText").length > 1 || textOptions(ad.data, "headline").length > 1 ? `<span>${textOptions(ad.data, "primaryText").length} primary texts · ${textOptions(ad.data, "headline").length} headlines</span>` : ""}${over.length ? `<span class="warn">${over.map(([k, max]) => `${FIELD_LABEL[k]} over ${max}`).join(", ")}</span>` : ""}</figcaption></figure>`;
 						})
 						.join("")}</div>`,
 					{ eyebrow: `Ads · ${esc(d.name)}` },
 				),
 			);
+			// Text options (Meta's multiple text options), two ads to a slide, so every variant is signed off.
+			const withOptions = sAds.filter((ad) => textOptions(ad.data, "primaryText").length > 1 || textOptions(ad.data, "headline").length > 1);
+			chunk(withOptions, 2).forEach((g, i, all) =>
+				slide(
+					"copyopts",
+					`${esc(a.name)} <small>text options${all.length > 1 ? ` ${i + 1}/${all.length}` : ""}</small>`,
+					g
+						.map((ad) => `<div class="opts"><h3>${esc(ad.data.name)}</h3><div class="opts-cols"><div><h4>Primary text</h4><ol>${textOptions(ad.data, "primaryText").map((t) => `<li>${esc(t)}</li>`).join("")}</ol></div><div><h4>Headline</h4><ol>${textOptions(ad.data, "headline").map((t) => `<li>${esc(t)}</li>`).join("")}</ol></div></div></div>`)
+						.join(""),
+					{ eyebrow: `Copy · ${esc(d.name)}` },
+				),
+			);
 		}
 	}
 
-	// Review and open issues
-	const open = Object.entries(issues).flatMap(([id, l]) => l.map((i) => ({ ...i, id })));
-	const order = { error: 0, warn: 1, info: 2, good: 3 };
-	const top = open.filter((i) => i.severity !== "info").sort((a, b) => order[a.severity] - order[b.severity]).slice(0, 10);
-	if (plan.feedback?.summary || top.length) {
-		const nm = (id) => (id === "plan" ? "Plan" : plan.nodes.find((n) => n.id === id)?.data.name ?? "");
-		slide(
-			"two review",
-			"Open questions before launch",
-			`<div class="col">${plan.feedback?.summary ? `<h3>Review</h3>${fitText(plan.feedback.summary, 900)}` : `<h3>Where it stands</h3><p class="note">Checks the planner runs on every save, plus Claude's review once it has run one.</p>`}<div class="counts"><div><b>${open.filter((i) => i.severity === "error").length}</b><span>blockers</span></div><div><b>${open.filter((i) => i.severity === "warn").length}</b><span>to fix</span></div><div><b>${open.filter((i) => i.severity === "info").length}</b><span>notes</span></div></div></div>
-			<div class="col"><ul class="iss">${top.map((i) => `<li class="sev-${i.severity}"><b>${esc(nm(i.id))}</b> ${esc(i.text)}${i.suggestion ? `<div class="dim">→ ${esc(i.suggestion)}</div>` : ""}</li>`).join("")}</ul>${open.length > top.length ? `<p class="dim">${open.length - top.length} more in the hand-off pack.</p>` : ""}</div>`,
-			{ eyebrow: "Review" },
-		);
-	}
-
-	// Build checklist, one column per network
-	if (nets.length)
-		slide(
-			"build",
-			"How it gets built",
-			`<div class="nets n${Math.min(nets.length, 4)}">${nets
-				.slice(0, 4)
-				.map((p) => {
-					const P = PLATFORMS[p];
-					const cs = camps.filter((c) => c.data.platforms.includes(p));
-					const nAds = ads.filter((ad) => ad.data.platform === p).length;
-					return `<div class="netcol"><h3>${netDots([p])}</h3><ol>
-						<li>${cs.length} ${P.levels[0].toLowerCase()}${cs.length === 1 ? "" : "s"}: ${[...new Set(cs.map((c) => objectiveLabel(c)))].map(esc).join(", ")}</li>
-						<li>${cs.reduce((a, c) => a + childrenOf(plan, c.id).length, 0)} ${P.levels[1].toLowerCase()}${cs.reduce((a, c) => a + childrenOf(plan, c.id).length, 0) === 1 ? "" : "s"} with the targeting above</li>
-						<li>${nAds} ${P.levels[2].toLowerCase()}${nAds === 1 ? "" : "s"}, named as in this deck</li>
-						<li>Pixel or conversion tracking checked, UTMs on every URL</li>
-						<li>Submitted, approved, live screenshots added to the plan</li></ol></div>`;
-				})
-				.join("")}</div><p class="note">The build sheet (Excel or CSV) has one row per ad, with every field to paste into each ads manager.${nets.length > 4 ? ` Plus ${nets.length - 4} more networks in the build sheet.` : ""}</p>`,
-			{ eyebrow: "Execution" },
-		);
 
 	const total = slides.length;
 	return slides.map((s, i) => s.replace(/<\/section>$/, `<footer class="sf"><span>${esc(plan.name)}</span><span>${i + 1} / ${total}</span><span class="wordmark">GrowthCast</span></footer></section>`)).join("\n");

@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { PLATFORMS, newPlan, newNode, normalize, lint, layoutPlan, issuesByNode } from "../studio/model.mjs";
+import { PLATFORMS, newPlan, newNode, normalize, lint, layoutPlan, issuesByNode, issueKey, derivedBudget } from "../studio/model.mjs";
 import { renderMock } from "../studio/mocks.mjs";
 import { renderBrief, renderCsv, renderMarkdown } from "../studio/brief.mjs";
 
@@ -96,10 +96,15 @@ test("naming convention: tokens, empty tokens drop with their separator, labels 
 	assert.equal(applyNaming(p), 2);
 	assert.equal(p.nodes[0].data.name, "01 // TOF // Sales // Acquisition", "label read back from a convention-built name");
 	assert.equal(conventionName(p, p.nodes[1]), "01.01 // Ad set 1");
-	assert.equal(p.nodes[2].data.name, "01.01.A // Ad 1 // Facebook feed");
+	assert.equal(p.nodes[2].data.name, "01.01.A // Ad 1 // Static 1:1", "automatic placements: {format} is the creative spec");
 	p.settings.naming.auto = true;
 	p.nodes[2].data.label = "Speed";
-	assert.equal(normalize(p).plan.nodes[2].data.name, "01.01.A // Speed // Facebook feed", "normalize renames when auto is on");
+	assert.equal(normalize(p).plan.nodes[2].data.name, "01.01.A // Speed // Static 1:1", "normalize renames when auto is on");
+	p.nodes[1].data.placements = ["facebook:feed"];
+	assert.equal(normalize(p).plan.nodes[2].data.name, "01.01.A // Speed // Facebook feed", "chosen placements: {format} is the placement format");
+	p.nodes[1].data.placements = "automatic";
+	p.nodes[2].data.mediaType = "video";
+	assert.equal(normalize(p).plan.nodes[2].data.name, "01.01.A // Speed // Video 1:1", "an explicit creative type wins");
 });
 
 test("channel budgets size the structure per channel and derive campaign and ad set budgets", async () => {
@@ -133,7 +138,7 @@ test("channel budgets size the structure per channel and derive campaign and ad 
 	old.settings.budget.monthly = 3000;
 	assert.deepEqual(normalize(old).plan.settings.channels, { meta: { monthly: 3000, cpa: 0 } }, "a single old test budget becomes the channel budget");
 	for (let i = 0; i < 12; i++) p.nodes.push(newNode("adset", { parent: p.nodes[0].id }));
-	assert.match(lint(normalize(p).plan).map((i) => i.text).join("\n"), /Meta ad sets on USD 6,000\/month/);
+	assert.doesNotMatch(lint(normalize(p).plan).map((i) => i.text).join("\n"), /ad sets on USD|can each get enough spend to read a result/);
 });
 
 test("a campaign runs on one network: older multi-network campaigns split, with that network's ads", () => {
@@ -222,5 +227,30 @@ test("slide deck walks the plan: cover, brief, structure, campaign, ad set, ads,
 	const slides = html.match(/<section class="slide/g).length;
 	assert.equal((html.match(/<\/section>/g) ?? []).length, slides, "every slide is closed");
 	assert.ok(slides >= 6);
-	for (const t of ["Spring promo", "Structure", "Mow less, live more", "How it gets built", `${slides} / ${slides}`]) assert.ok(html.includes(t), t);
+	for (const t of ["Open questions before launch", "How it gets built"]) assert.ok(!html.includes(t), `no "${t}" slide`);
+	for (const t of ["Spring promo", "Structure", "Mow less, live more", `${slides} / ${slides}`]) assert.ok(html.includes(t), t);
+});
+
+test("removed notes stay hidden: checks by key while their text holds, Claude notes by resolving", () => {
+	const p = normalize(newPlan()).plan;
+	const all = () => Object.values(issuesByNode(p)).flat();
+	const check = all().find((i) => i.source === "check");
+	p.feedback.dismissed = [issueKey(check)];
+	p.feedback.items = [{ node: null, severity: "warn", text: "Claude note", resolved: true, dismissed: true }];
+	assert.ok(!all().some((i) => issueKey(i) === issueKey(check)), "dismissed check is hidden");
+	assert.ok(!all().some((i) => i.text === "Claude note"), "dismissed Claude note is hidden");
+	assert.deepEqual(normalize(p).plan.feedback.dismissed, [issueKey(check)], "dismissals survive a save");
+});
+
+test("campaigns in one funnel stage can split it unevenly with a share; the rest split what's left", () => {
+	const p = newPlan();
+	p.settings.channels = { meta: { monthly: 36500, cpa: 0 } };
+	p.settings.funnel = { tof: 100, mof: 0, bof: 0 };
+	p.nodes = ["a", "b", "c"].map((label) => newNode("campaign", { data: { label, funnel: "tof", platforms: ["meta"] } }));
+	const daily = (plan) => plan.nodes.map((c) => derivedBudget(plan, c).daily);
+	assert.deepEqual(daily(normalize(p).plan), [400, 400, 400], "even split by default");
+	p.nodes[0].data.budget = { level: "campaign", share: 70 };
+	assert.deepEqual(daily(normalize(p).plan), [840, 180, 180], "a 70% share; the other two split 30%");
+	p.nodes[1].data.budget = { level: "campaign", share: 70 };
+	assert.deepEqual(daily(normalize(p).plan), [600, 600, 0], "shares over 100% scale down to fit");
 });
