@@ -1325,6 +1325,10 @@ function openSettings() {
 			<ul class="ctx-list" id="ctxList"></ul>
 			<button type="button" data-ctx-add>+ Add files</button>
 		</div>
+		${READONLY ? "" : `<div class="set-sec"><h4>Plan file</h4>
+			<p class="muted small">Move a plan between the planner plugin and the portal. Importing replaces this plan's campaigns, ad sets, ads, brief, settings and review with the file's; it keeps this plan's place (its project in the portal) and its positioning files. Positioning files and uploaded creative aren't in the file: add them again here.</p>
+			<div class="btn-row"><button type="button" data-plan-import>Import plan file…</button><button type="button" data-plan-download>Download plan file</button></div>
+		</div>`}
 		<div class="btn-row end"><button value="close">Done</button></div></form>`;
 	d.showModal();
 	renderSettingsOut();
@@ -1371,6 +1375,12 @@ $("#settingsDlg").addEventListener("click", async (e) => {
 		mutate((plan) => (n = applyNaming(plan)));
 		return toast(n ? `Renamed ${n} node${n === 1 ? "" : "s"} to the convention.` : "Every name already follows the convention.");
 	}
+	if (b("[data-plan-download]")) {
+		const a = Object.assign(document.createElement("a"), { href: URL.createObjectURL(new Blob([JSON.stringify(S.plan, null, "\t")], { type: "application/json" })), download: `${S.plan.name.replace(/[^\w.-]+/g, "-").replace(/^-|-$/g, "") || "plan"}.json` });
+		a.click();
+		return setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+	}
+	if (b("[data-plan-import]")) return importPlanFile();
 	if ((el = b("[data-ctx-rm]"))) return mutate((plan) => plan.settings.context.splice(Number(el.dataset.ctxRm), 1));
 	if (b("[data-ctx-add]")) {
 		const files = await new Promise((ok) => {
@@ -1387,6 +1397,44 @@ $("#settingsDlg").addEventListener("click", async (e) => {
 	}
 });
 $("#settingsBtn").onclick = openSettings;
+// Replaces this plan's contents with a plan file (the plugin's plans/<id>.json, or a downloaded plan file). The plan
+// keeps its id, and so its project in the portal, and its own positioning files; creative that pointed at another
+// planner's /assets/ can't be carried over and is dropped.
+async function importPlanFile() {
+	const file = await new Promise((ok) => {
+		const i = Object.assign(document.createElement("input"), { type: "file", accept: ".json,application/json" });
+		i.onchange = () => ok(i.files[0]);
+		i.click();
+	});
+	if (!file) return;
+	let incoming;
+	try {
+		incoming = JSON.parse(await file.text());
+	} catch {
+		return toast("That file isn't a plan: it isn't valid JSON.");
+	}
+	const { plan: clean, errors } = normalize(incoming ?? {});
+	if (!clean || errors.length) return toast(`That plan file can't be imported: ${(errors[0] ?? "not a plan").slice(0, 160)}`);
+	const counts = ["campaign", "adset", "ad"].map((t) => clean.nodes.filter((n) => n.type === t).length);
+	if (!confirm(`Replace “${S.plan.name}” with “${clean.name}” (${counts[0]} campaigns, ${counts[1]} ad sets, ${counts[2]} ads)? Undo brings this plan back.`)) return;
+	const foreign = (m) => typeof m?.src === "string" && m.src.startsWith("/assets/") && !m.src.startsWith(`/assets/${S.plan.id}/`) && !/^\/assets\/[0-9a-f]{32}\//.test(m.src);
+	let dropped = 0;
+	for (const n of clean.nodes.filter((x) => x.type === "ad")) {
+		const before = n.data.media.length;
+		n.data.media = n.data.media.filter((m) => !foreign(m));
+		dropped += before - n.data.media.length;
+		for (const c of n.data.cards ?? []) if (foreign(c)) delete c.src, delete c.kind, dropped++;
+	}
+	mutate((plan) => {
+		const keep = { id: plan.id, context: plan.settings.context, activity: plan.activity, createdAt: plan.createdAt };
+		for (const k of Object.keys(plan)) delete plan[k];
+		Object.assign(plan, structuredClone(clean), { id: keep.id, createdAt: keep.createdAt ?? clean.createdAt, activity: keep.activity ?? [] });
+		plan.settings.context = keep.context ?? [];
+	});
+	S.sel = null;
+	$("#settingsDlg").close();
+	toast(`Imported “${clean.name}”.${dropped ? ` ${dropped} creative file${dropped === 1 ? "" : "s"} from another planner couldn't come along: upload ${dropped === 1 ? "it" : "them"} again.` : ""}${clean.settings.context.length ? " Add its positioning files in Settings." : ""}`);
+}
 // In the portal, files come from the API with the session token, so links become fetched blobs.
 async function openAuthed(url, newTab = false, filename = "") {
 	const w = newTab ? open("", "_blank") : null;
