@@ -22,6 +22,7 @@ import { FIT_SCRIPT, renderSlides } from "../studio/slides.mjs";
 import { workbook, zip } from "./xlsx.mjs";
 import { googleAdsEditorFiles } from "../studio/gads.mjs";
 import { canvasImages } from "../studio/images.mjs";
+import { adAccounts, composio, connectable } from "../studio/connect.mjs";
 import { formatLabel } from "../studio/mocks.mjs";
 
 const tools = dirname(fileURLToPath(import.meta.url));
@@ -378,6 +379,19 @@ export function serve(listenPort = port) {
 			if (req.method === "GET" && parts.length === 2 && parts[0] === "fonts" && /^[a-z0-9-]+\.ttf$/.test(parts[1])) return file(res, join(studio, "fonts", parts[1]));
 			if (req.method === "GET" && parts[0] === "assets") return file(res, assetFile(url.pathname) ?? "/nonexistent");
 			if (req.method === "GET" && parts[0] === "context") return file(res, contextFile(url.pathname) ?? "/nonexistent");
+
+			// Ad accounts through Composio (read-only import). The key stays in this process's environment.
+			if (parts[0] === "api" && parts[1] === "connect") {
+				const key = process.env.COMPOSIO_API_KEY;
+				const net = parts[2];
+				if (route === "GET /api/connect" && !key) return send(res, 200, { configured: false, networks: connectable().map((n) => ({ net: n, name: PLATFORMS[n].name, connected: false })) });
+				const svc = adAccounts(composio({ apiKey: key, ...(process.env.COMPOSIO_BASE_URL ? { base: process.env.COMPOSIO_BASE_URL } : {}) }), process.env.COMPOSIO_USER_ID || "paid-media-planner");
+				if (route === "GET /api/connect") return send(res, 200, { configured: true, networks: await svc.status() });
+				if (req.method === "POST" && parts.length === 3) return send(res, 200, await svc.connect(net));
+				if (req.method === "DELETE" && parts.length === 3) return send(res, 200, await svc.disconnect(net));
+				if (req.method === "GET" && parts[3] === "accounts") return send(res, 200, await svc.accounts(net));
+				if (req.method === "POST" && parts[3] === "import") return send(res, 200, await svc.import(net, (await json(req)).account));
+			}
 
 			if (route === "GET /api/plans") return send(res, 200, listPlans());
 			if (route === "POST /api/plans") {

@@ -1365,14 +1365,99 @@ function openSettings() {
 			<ul class="ctx-list" id="ctxList"></ul>
 			<button type="button" data-ctx-add>+ Add files</button>
 		</div>
-		${READONLY ? "" : `<div class="set-sec"><h4>Plan file</h4>
+		${READONLY ? "" : `<div class="set-sec"><h4>Import from an ad account</h4>
+			<p class="muted small">Connect a network's ad account through Composio and bring its live campaigns, ${"ad sets"} and ads onto this canvas, read-only: nothing in the account changes. Imported nodes keep the platform's ids, status and live budget in their notes.</p>
+			<div id="connectOut" class="connect"><p class="muted small">Checking connections…</p></div>
+		</div>
+		<div class="set-sec"><h4>Plan file</h4>
 			<p class="muted small">Move a plan between the planner plugin and the portal. Importing replaces this plan's campaigns, ad sets, ads, brief, settings and review with the file's; it keeps this plan's place (its project in the portal) and its positioning files. Positioning files and uploaded creative aren't in the file: add them again here.</p>
 			<div class="btn-row"><button type="button" data-plan-import>Import plan file…</button><button type="button" data-plan-download>Download plan file</button></div>
 		</div>`}
 		<div class="btn-row end"><button value="close">Done</button></div></form>`;
 	d.showModal();
 	renderSettingsOut();
+	if (!READONLY) renderConnect();
 }
+// ---------- ad accounts (Composio) ----------
+const CX = { accounts: {}, busy: "" };
+async function renderConnect() {
+	const out = $("#connectOut");
+	if (!out) return;
+	let st;
+	try {
+		st = (await api("/api/connect")).body;
+	} catch (e) {
+		out.innerHTML = `<p class="small">Couldn't reach the ad-account connector: ${esc(e.message)}</p>`;
+		return;
+	}
+	if (!st.configured) {
+		out.innerHTML = `<p class="small">${WEB ? "Ad-account import isn't set up for this portal yet: an admin adds the COMPOSIO_API_KEY setting to the planner." : "Set <code>COMPOSIO_API_KEY</code> in your environment (from platform.composio.dev → API keys) and restart the planner to connect ad accounts."}</p>`;
+		return;
+	}
+	out.innerHTML = `<table class="stages conn"><tbody>${st.networks
+		.map((n) => {
+			const accts = CX.accounts[n.net];
+			const pick = !n.connected ? "" : n.needsId ? `<input data-cx-id="${n.net}" placeholder="Ad account id, e.g. a2_abc123">` : accts ? `<select data-cx-acct="${n.net}">${accts.map((a) => `<option value="${esc(a.id)}">${esc(a.name)}${a.currency ? ` · ${esc(a.currency)}` : ""}</option>`).join("") || "<option value=\"\">No ad accounts found</option>"}</select>` : `<button type="button" data-cx-load="${n.net}">Choose account…</button>`;
+			return `<tr><td><span class="net" style="--c:${PLATFORMS[n.net].color}">${PLATFORMS[n.net].short}</span></td><td>${n.connected ? '<span class="st st-approved">Connected</span>' : '<span class="muted small">Not connected</span>'}</td><td class="cx-pick">${pick}</td><td class="cx-act">${n.connected ? `<button type="button" data-cx-import="${n.net}"${n.needsId || accts?.length ? "" : " disabled"}>Import</button><button type="button" data-cx-off="${n.net}" title="Disconnect">×</button>` : `<button type="button" data-cx-on="${n.net}">Connect</button>`}</td></tr>`;
+		})
+		.join("")}</tbody></table><p class="muted small">After signing in to a network in the new tab, come back and <button type="button" class="linkish" data-cx-refresh>refresh</button>. X isn't available through Composio.</p>`;
+}
+$("#settingsDlg").addEventListener("click", async (e) => {
+	const el = e.target.closest("[data-cx-on],[data-cx-off],[data-cx-load],[data-cx-import],[data-cx-refresh]");
+	if (!el || CX.busy) return;
+	const net = el.dataset.cxOn ?? el.dataset.cxOff ?? el.dataset.cxLoad ?? el.dataset.cxImport;
+	const label = el.textContent;
+	CX.busy = net ?? "refresh";
+	el.disabled = true;
+	try {
+		if (el.dataset.cxRefresh != null) return void (CX.accounts = {});
+		if (el.dataset.cxOn) {
+			const w = open("", "_blank");
+			const { body } = await post(`/api/connect/${net}`, {});
+			if (w) w.location = body.url;
+			else open(body.url, "_blank");
+			return toast(`Sign in to ${PLATFORMS[net].name} in the new tab, then refresh here.`);
+		}
+		if (el.dataset.cxOff) {
+			if (!confirm(`Disconnect ${PLATFORMS[net].name}? Imported campaigns stay on the canvas.`)) return;
+			await post(`/api/connect/${net}`, {}, "DELETE");
+			delete CX.accounts[net];
+			return;
+		}
+		if (el.dataset.cxLoad) {
+			el.textContent = "Loading…";
+			CX.accounts[net] = (await api(`/api/connect/${net}/accounts`)).body;
+			return;
+		}
+		const typed = $(`[data-cx-id="${net}"]`)?.value.trim();
+		const sel = $(`[data-cx-acct="${net}"]`);
+		const account = typed ? { id: typed, name: typed } : CX.accounts[net]?.find((a) => a.id === sel?.value);
+		if (!account?.id) return toast("Pick an ad account first.");
+		el.textContent = "Importing…";
+		const { body } = await post(`/api/connect/${net}/import`, { account });
+		if (!body.nodes.length) return toast(`No active or paused campaigns in ${account.name}.`);
+		const { campaigns, adsets, ads } = body.counts;
+		if (!confirm(`Add ${campaigns} campaign${campaigns === 1 ? "" : "s"}, ${adsets} ${PLATFORMS[net].levels[1].toLowerCase()}${adsets === 1 ? "" : "s"} and ${ads} ad${ads === 1 ? "" : "s"} from ${account.name} to this canvas?${body.truncated.length ? ` Not everything fit: ${body.truncated.join(", ")}.` : ""}`)) return;
+		mutate((plan) => {
+			const laid = layoutPlan({ nodes: structuredClone(body.nodes) });
+			const top = Math.max(0, ...plan.nodes.map((n) => (n.y ?? 0) + 180)) + (plan.nodes.length ? 120 : 0);
+			for (const n of laid.nodes) plan.nodes.push({ ...n, y: n.y + top });
+			const unset = !Object.values(plan.settings.channels).some((c) => c.monthly);
+			const ch = (plan.settings.channels[net] ??= { monthly: 0, cpa: 0 });
+			if (!ch.monthly && body.monthly) ch.monthly = body.monthly;
+			// A plan with no channel budgets yet takes the account's currency, so live budgets and derived ones agree.
+			if (unset && /^[A-Z]{3}$/.test(account.currency ?? "")) plan.settings.budget.currency = account.currency;
+		}, { rerender: "all" });
+		toast(`Imported ${campaigns} campaign${campaigns === 1 ? "" : "s"} from ${account.name}.${body.monthly ? ` Live spend runs about ${account.currency ?? ""} ${body.monthly.toLocaleString()}/month.` : ""}`);
+	} catch (err) {
+		toast(err.message);
+	} finally {
+		CX.busy = "";
+		el.disabled = false;
+		el.textContent = label;
+		renderConnect();
+	}
+});
 function renderSettingsOut() {
 	const d = $("#settingsDlg");
 	const st = S.plan.settings;
