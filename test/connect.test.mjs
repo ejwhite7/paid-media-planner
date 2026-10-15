@@ -10,9 +10,9 @@ import { serve, setHome } from "../tools/canvas.mjs";
 
 const TOOLS = {
 	METAADS_GET_AD_ACCOUNTS: () => ({ data: [{ id: "act_1", name: "Durable", currency: "CAD" }] }),
-	METAADS_LIST_CAMPAIGNS: () => ({ data: [{ id: "c1", name: "TOF Scale", objective: "OUTCOME_SALES", effective_status: "ACTIVE", daily_budget: "134000", start_time: "2026-10-01T00:00:00-0700" }], paging: {} }),
+	METAADS_LIST_CAMPAIGNS: () => ({ data: [{ id: "c1", name: "TOF Scale", objective: "OUTCOME_SALES", effective_status: "ACTIVE", daily_budget: "134000", start_time: "2026-10-01T00:00:00-0700" }, { id: "c9", name: "Old promo", objective: "OUTCOME_SALES", effective_status: "PAUSED", daily_budget: "50000" }], paging: {} }),
 	METAADS_READ_ADSETS: () => ({ data: [{ id: "s1", name: "Advantage+ audience", campaign_id: "c1", effective_status: "ACTIVE", optimization_goal: "VALUE", targeting: { age_min: 21, age_max: 65, geo_locations: { countries: ["US"] }, targeting_automation: { advantage_audience: 1 }, excluded_custom_audiences: [{ id: "9", name: "Paid customers" }] } }] }),
-	METAADS_LIST_ADS: () => ({ data: [{ id: "a1", name: "UGC cleaner", adset_id: "s1", effective_status: "PAUSED", creative: { id: "cr1", title: "Book and get paid", body: "Cleaners: get booked online.", object_type: "VIDEO" } }] }),
+	METAADS_LIST_ADS: () => ({ data: [{ id: "a0", name: "Paused test", adset_id: "s1", effective_status: "PAUSED" }, { id: "a1", name: "UGC cleaner", adset_id: "s1", effective_status: "ACTIVE", creative: { id: "cr1", title: "Book and get paid", body: "Cleaners: get booked online.", object_type: "VIDEO" } }] }),
 	GOOGLEADS_LIST_ACCESSIBLE_CUSTOMERS: () => ({ resourceNames: ["customers/9085658195"] }),
 	GOOGLEADS_SEARCH_STREAM_GAQL: (a) => {
 		const q = a.query;
@@ -72,8 +72,10 @@ test("connect: a network links through Composio, lists accounts and imports read
 	assert.deepEqual([s.data.ageMin, s.data.locations, s.data.exclusions], [21, ["US"], ["Paid customers"]]);
 	assert.match(s.data.notes, /Advantage\+ audience on/);
 	assert.equal(a.data.headline, "Book and get paid");
-	assert.equal(a.status, "draft", "paused ads import as draft");
+	assert.equal(a.status, "live");
+	assert.ok(!r.nodes.some((n) => /Old promo|Paused test/.test(n.data.name)), "paused campaigns and ads stay out");
 	assert.ok(fake.calls.filter((x) => x.path.includes("/tools/execute/")).every((x) => /LIST|GET|READ|SEARCH/.test(x.path)), "only read tools");
+	assert.deepEqual(fake.calls.find((x) => x.path.endsWith("METAADS_LIST_CAMPAIGNS")).body.arguments.effective_status, ["ACTIVE"], "asks Meta for active campaigns only");
 	assert.ok(fake.calls.every((x) => x.key === "k"));
 	const plan = newPlan("Imported");
 	plan.nodes = r.nodes;
@@ -94,17 +96,19 @@ test("connect: Google reads campaigns, keywords with match types, negatives, RSA
 	assert.match(c.data.notes, /Live budget: CAD 400\/day[\s\S]*Last 30 days: 23291\.64 spend, 10,240 clicks, 181\.2 conversions/);
 	assert.deepEqual(s.data.targeting, { keywords: ["[durable]"], negativeKeywords: ["durable goods"] });
 	assert.deepEqual([a.data.format, a.data.headline, a.data.headline2, a.data.extraHeadlines, a.data.description, a.data.extraDescriptions, a.data.url], ["search", "Durable AI Website Builder", "Official Site", ["Build in 30 Seconds"], "Website, bookings and payments.", ["Start free."], "https://durable.com/"]);
+	const gaql = fake.calls.filter((x) => x.path.endsWith("GOOGLEADS_SEARCH_STREAM_GAQL")).map((x) => x.body.arguments.query).filter((q) => !q.includes("FROM customer"));
+	assert.ok(gaql.length === 5 && gaql.every((q) => q.includes("campaign.status = 'ENABLED'") && !q.includes("PAUSED")), "Google reads enabled items only");
 	const plan = newPlan("G");
 	plan.nodes = r.nodes;
 	assert.deepEqual(normalize(plan).errors, []);
 });
 
-test("connect: TikTok maps ENABLE/DISABLE and nests ad groups and ads", async () => {
+test("connect: TikTok maps ENABLE/DISABLE and imports only enabled items", async () => {
 	const fake = fakeComposio();
 	const svc = adAccounts(composio({ apiKey: "k", fetch: fake.fetch }), "paid-media-planner");
 	await svc.connect("tiktok");
 	const r = await svc.import("tiktok", (await svc.accounts("tiktok"))[0]);
-	assert.deepEqual(r.nodes.map((n) => [n.type, n.status]), [["campaign", "live"], ["adset", "live"], ["ad", "draft"]]);
+	assert.deepEqual(r.nodes.map((n) => [n.type, n.status]), [["campaign", "live"], ["adset", "live"]], "the disabled ad stays out");
 	assert.deepEqual(r.nodes[1].data.ageBuckets, ["AGE_25_34"]);
 });
 

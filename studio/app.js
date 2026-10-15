@@ -1366,7 +1366,7 @@ function openSettings() {
 			<button type="button" data-ctx-add>+ Add files</button>
 		</div>
 		${READONLY ? "" : `<div class="set-sec"><h4>Import from an ad account</h4>
-			<p class="muted small">Connect a network's ad account through Composio and bring its live campaigns, ${"ad sets"} and ads onto this canvas, read-only: nothing in the account changes. Imported nodes keep the platform's ids, status and live budget in their notes.</p>
+			<p class="muted small">Connect a network's ad account through Composio and bring its active campaigns, ad sets and ads onto this canvas, read-only: nothing in the account changes. Imported nodes keep the platform's ids, status and live budget in their notes.</p>
 			<div id="connectOut" class="connect"><p class="muted small">Checking connections…</p></div>
 		</div>
 		<div class="set-sec"><h4>Plan file</h4>
@@ -1435,7 +1435,7 @@ $("#settingsDlg").addEventListener("click", async (e) => {
 		if (!account?.id) return toast("Pick an ad account first.");
 		el.textContent = "Importing…";
 		const { body } = await post(`/api/connect/${net}/import`, { account });
-		if (!body.nodes.length) return toast(`No active or paused campaigns in ${account.name}.`);
+		if (!body.nodes.length) return toast(`No active campaigns in ${account.name}.`);
 		const { campaigns, adsets, ads } = body.counts;
 		if (!confirm(`Add ${campaigns} campaign${campaigns === 1 ? "" : "s"}, ${adsets} ${PLATFORMS[net].levels[1].toLowerCase()}${adsets === 1 ? "" : "s"} and ${ads} ad${ads === 1 ? "" : "s"} from ${account.name} to this canvas?${body.truncated.length ? ` Not everything fit: ${body.truncated.join(", ")}.` : ""}`)) return;
 		mutate((plan) => {

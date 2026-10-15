@@ -1,4 +1,4 @@
-// Ad accounts through Composio: connect a network's ad account, list its accounts, and read live campaigns, ad sets
+// Ad accounts through Composio: connect a network's ad account, list its accounts, and read active campaigns, ad sets
 // and ads into planner nodes. Read-only: only list and search tools are called, never a create, update or delete.
 // The servers (tools/canvas.mjs, the hosted planner) call it with their own Composio API key; the browser only sees
 // the results. Tool slugs and response shapes are Composio's (docs.composio.dev, toolkits metaads, googleads,
@@ -97,11 +97,11 @@ export const CONNECTORS = {
 		async read(run, account) {
 			const truncated = [];
 			const camps = await pages(async (after) => {
-				const d = await run("METAADS_LIST_CAMPAIGNS", { ad_account_id: account, limit: 100, after, effective_status: ["ACTIVE", "PAUSED"], fields: ["id", "name", "objective", "status", "effective_status", "daily_budget", "lifetime_budget", "bid_strategy", "start_time", "stop_time", "special_ad_categories"] });
+				const d = await run("METAADS_LIST_CAMPAIGNS", { ad_account_id: account, limit: 100, after, effective_status: ["ACTIVE"], fields: ["id", "name", "objective", "status", "effective_status", "daily_budget", "lifetime_budget", "bid_strategy", "start_time", "stop_time", "special_ad_categories"] });
 				return { items: arr(d.data), next: d.paging?.cursors?.after && d.paging?.next ? d.paging.cursors.after : null };
 			});
 			if (camps.truncated) truncated.push("campaigns");
-			const sets = await run("METAADS_READ_ADSETS", { ad_account_id: account, limit: 1000, effective_status: ["ACTIVE", "PAUSED", "CAMPAIGN_PAUSED", "ADSET_PAUSED"], fields: ["id", "name", "status", "effective_status", "campaign_id", "daily_budget", "lifetime_budget", "optimization_goal", "destination_type", "targeting", "bid_strategy", "bid_amount"] });
+			const sets = await run("METAADS_READ_ADSETS", { ad_account_id: account, limit: 1000, effective_status: ["ACTIVE"], fields: ["id", "name", "status", "effective_status", "campaign_id", "daily_budget", "lifetime_budget", "optimization_goal", "destination_type", "targeting", "bid_strategy", "bid_amount"] });
 			const ads = await run("METAADS_LIST_ADS", { ad_account_id: account, limit: 100, fields: "id,name,status,effective_status,adset_id,campaign_id,creative{id,title,body,object_type,call_to_action_type,link_url}" });
 			if (arr(ads.data).length >= 100) truncated.push("ads (first 100)");
 			const adsBySet = groupBy(arr(ads.data), (a) => a.adset_id);
@@ -155,11 +155,11 @@ export const CONNECTORS = {
 		async read(run, customer) {
 			const q = (query) => run("GOOGLEADS_SEARCH_STREAM_GAQL", { customer_id: customer, query: GAQL(query) }).then((r) => arr(r.results));
 			const [camps, perf, groups, kws, ads] = await Promise.all([
-				q(`SELECT campaign.id, campaign.name, campaign.status, campaign.advertising_channel_type, campaign.bidding_strategy_type, campaign.target_cpa.target_cpa_micros, campaign.maximize_conversions.target_cpa_micros, campaign_budget.amount_micros, campaign.start_date, campaign.end_date FROM campaign WHERE campaign.status IN ('ENABLED', 'PAUSED')`),
-				q(`SELECT campaign.id, metrics.cost_micros, metrics.clicks, metrics.conversions, metrics.conversions_value FROM campaign WHERE campaign.status IN ('ENABLED', 'PAUSED') AND segments.date DURING LAST_30_DAYS`),
-				q(`SELECT campaign.id, ad_group.id, ad_group.name, ad_group.status FROM ad_group WHERE ad_group.status IN ('ENABLED', 'PAUSED') AND campaign.status IN ('ENABLED', 'PAUSED')`),
-				q(`SELECT ad_group.id, ad_group_criterion.keyword.text, ad_group_criterion.keyword.match_type, ad_group_criterion.negative FROM ad_group_criterion WHERE ad_group_criterion.type = 'KEYWORD' AND ad_group_criterion.status IN ('ENABLED', 'PAUSED') AND campaign.status IN ('ENABLED', 'PAUSED') LIMIT 5000`),
-				q(`SELECT ad_group.id, ad_group_ad.ad.id, ad_group_ad.ad.name, ad_group_ad.status, ad_group_ad.ad.type, ad_group_ad.ad.final_urls, ad_group_ad.ad.responsive_search_ad.headlines, ad_group_ad.ad.responsive_search_ad.descriptions, ad_group_ad.ad.responsive_search_ad.path1, ad_group_ad.ad.responsive_search_ad.path2 FROM ad_group_ad WHERE ad_group_ad.status IN ('ENABLED', 'PAUSED') AND campaign.status IN ('ENABLED', 'PAUSED') LIMIT 2000`),
+				q(`SELECT campaign.id, campaign.name, campaign.status, campaign.advertising_channel_type, campaign.bidding_strategy_type, campaign.target_cpa.target_cpa_micros, campaign.maximize_conversions.target_cpa_micros, campaign_budget.amount_micros, campaign.start_date, campaign.end_date FROM campaign WHERE campaign.status = 'ENABLED'`),
+				q(`SELECT campaign.id, metrics.cost_micros, metrics.clicks, metrics.conversions, metrics.conversions_value FROM campaign WHERE campaign.status = 'ENABLED' AND segments.date DURING LAST_30_DAYS`),
+				q(`SELECT campaign.id, ad_group.id, ad_group.name, ad_group.status FROM ad_group WHERE ad_group.status = 'ENABLED' AND campaign.status = 'ENABLED'`),
+				q(`SELECT ad_group.id, ad_group_criterion.keyword.text, ad_group_criterion.keyword.match_type, ad_group_criterion.negative FROM ad_group_criterion WHERE ad_group_criterion.type = 'KEYWORD' AND ad_group_criterion.status = 'ENABLED' AND campaign.status = 'ENABLED' LIMIT 5000`),
+				q(`SELECT ad_group.id, ad_group_ad.ad.id, ad_group_ad.ad.name, ad_group_ad.status, ad_group_ad.ad.type, ad_group_ad.ad.final_urls, ad_group_ad.ad.responsive_search_ad.headlines, ad_group_ad.ad.responsive_search_ad.descriptions, ad_group_ad.ad.responsive_search_ad.path1, ad_group_ad.ad.responsive_search_ad.path2 FROM ad_group_ad WHERE ad_group_ad.status = 'ENABLED' AND campaign.status = 'ENABLED' LIMIT 2000`),
 			]);
 			const m = (v) => (v == null ? null : Number(v) / 1e6);
 			const perfBy = new Map();
@@ -244,11 +244,11 @@ export const CONNECTORS = {
 		},
 		async read(run, account) {
 			const camps = await pages(async (token) => {
-				const d = await run("LINKEDIN_ADS_SEARCH_CAMPAIGNS", { adAccountId: Number(account), pageSize: 1000, search: "(status:(values:List(ACTIVE,PAUSED)))", ...(token ? { pageToken: token } : {}) });
+				const d = await run("LINKEDIN_ADS_SEARCH_CAMPAIGNS", { adAccountId: Number(account), pageSize: 1000, search: "(status:(values:List(ACTIVE)))", ...(token ? { pageToken: token } : {}) });
 				return { items: arr(d.elements), next: d.metadata?.nextPageToken };
 			});
 			const creatives = await pages(async (token) => {
-				const d = await run("LINKEDIN_ADS_SEARCH_CREATIVES", { ad_account_id: String(account), page_size: 100, intended_statuses: ["ACTIVE", "PAUSED"], ...(token ? { page_token: token } : {}) });
+				const d = await run("LINKEDIN_ADS_SEARCH_CREATIVES", { ad_account_id: String(account), page_size: 100, intended_statuses: ["ACTIVE"], ...(token ? { page_token: token } : {}) });
 				return { items: arr(d.elements), next: d.metadata?.next_page_token };
 			});
 			const crBy = groupBy(creatives.items, (c) => String(c.campaign ?? "").split(":").pop());
@@ -300,7 +300,7 @@ export const CONNECTORS = {
 		async read(run, account) {
 			const list = (slug) =>
 				pages(async (cursor) => {
-					const d = await run(slug, { ad_account_id: account, page_size: 250, entity_statuses: ["ACTIVE", "PAUSED"], ...(cursor ? { next_cursor: cursor } : {}) });
+					const d = await run(slug, { ad_account_id: account, page_size: 250, entity_statuses: ["ACTIVE"], ...(cursor ? { next_cursor: cursor } : {}) });
 					return { items: arr(d.items), next: d.has_more ? d.next_cursor : null };
 				});
 			const [camps, groups, ads] = await Promise.all([list("PINTEREST_ADS_LIST_CAMPAIGNS"), list("PINTEREST_ADS_LIST_AD_GROUPS"), list("PINTEREST_ADS_LIST_ADS")]);
@@ -349,6 +349,8 @@ export const CONNECTORS = {
 export const connectable = () => Object.keys(CONNECTORS).filter((k) => PLATFORMS[k]);
 
 // ---------- into the plan ----------
+// Only what's running comes in: active campaigns, and their active ad sets and ads. The reads above already ask each
+// network for active items; this drops anything a network's filter let through.
 // The account's tree as new planner nodes (fresh ids; the platform ids go in each node's notes so a re-import can be
 // matched by hand). Budgets are derived from the channel budget, so the live budget is recorded in the notes and the
 // account's monthly spend is offered as the channel budget.
@@ -359,22 +361,22 @@ export function toNodes(net, account, tree, { currency = "", today = new Date().
 	const status = (s) => (live(s) ? "live" : "draft");
 	const src = (kind, x) => `Imported from ${P.name} ${account.name ?? account.id} on ${today}: ${kind} ${x.id}, ${String(x.status ?? "").toLowerCase() || "status unknown"}.`;
 	let daily = 0;
-	for (const c of tree.campaigns) {
+	for (const c of tree.campaigns.filter((x) => live(x.status))) {
 		const obj = objectiveFor(net, c.objective);
 		const cp = newNode("campaign", { platform: net, data: { label: c.name, ...obj, schedule: { start: c.start ?? "", end: c.end ?? "" }, ...(net === "google" ? { campaignType: c.campaignType ?? "SEARCH", bidStrategy: c.bidStrategy && CATALOG.google.bid.strategies.some((s) => s[0] === c.bidStrategy) ? c.bidStrategy : "", bidAmount: c.bidAmount ?? "" } : {}) } });
 		cp.data.name = c.name;
 		cp.status = status(c.status);
 		cp.data.notes = [src("campaign", c), c.budget ? `Live budget: ${money(c.budget, c.budgetType)}.` : "", c.objective && !CATALOG[net]?.objectives.some((o) => o.id === String(c.objective).toUpperCase()) ? `Objective in ${P.short}: ${c.objective}.` : "", c.special ? `Special ad category: ${c.special}.` : "", c.notes ?? ""].filter(Boolean).join("\n");
-		if (live(c.status) && c.budgetType !== "lifetime") daily += c.budget ?? 0;
+		if (c.budgetType !== "lifetime") daily += c.budget ?? 0;
 		nodes.push(cp);
-		for (const s of c.adsets ?? []) {
+		for (const s of (c.adsets ?? []).filter((x) => live(x.status))) {
 			const as = newNode("adset", { parent: cp.id, platform: net, data: { label: s.name, ...s.data, targeting: { ...(s.data?.targeting ?? {}) } } });
 			as.data.name = s.name;
 			as.status = status(s.status);
 			as.data.notes = [src(P.levels[1].toLowerCase(), s), s.budget ? `Live budget: ${money(s.budget)}.` : "", s.notes ?? ""].filter(Boolean).join("\n");
-			if (live(c.status) && live(s.status) && !c.budget) daily += s.budget ?? 0;
+			if (!c.budget) daily += s.budget ?? 0;
 			nodes.push(as);
-			for (const a of s.ads ?? []) {
+			for (const a of (s.ads ?? []).filter((x) => live(x.status))) {
 				const ad = newNode("ad", { parent: as.id, platform: net, data: { label: a.name, ...a.data } });
 				ad.data.name = a.name;
 				ad.status = status(a.status);
