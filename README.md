@@ -37,7 +37,7 @@ Then run `/paid-media-planner:open`, optionally followed by what the campaign is
 | **Brief** | The hand-off view: objectives per network, targeting, copy with character counts, mocks, open issues, and a build checklist per network. |
 | **Settings** | One naming convention for campaign → ad set → ad (tokens such as `{seq}`, `{funnel}`, `{label}`, `{format}`), kept on every save if you switch it on. A monthly budget per channel that sizes each channel's structure to what it can actually test: how many campaigns, ad sets and ads each get enough spend to leave learning. TOF / MOF / BOF weighting (60 / 25 / 15 by default) splits each channel's budget across its campaigns; campaign and ad set budgets are derived from it. Positioning and messaging files from GrowthCast's Positioning Wizard or marketing-strategy workshop, which Claude grounds copy and creative in. |
 | **Ask Claude** | Build from prompt, Review plan, Improve selection, Write copy, Design creative. The request is queued and goes to Claude with your next message in Claude Code (“go” is enough). Claude edits the plan and the canvas reloads by itself. Claude's notes show as ✦ badges on nodes. **Design creative** has Claude make the produced ads' images and video with whatever this Claude session can use (image and video generation tools you've set up, p5.js, Blender), at each format's size. Ads marked as creator (UGC) keep their placeholder and get a creator brief. |
-| **Share** | Download a **slide-deck PDF** for sign-off (cover, brief and funnel budget, structure, each campaign and ad set, every ad as a native mockup, open questions, build steps), an **Excel workbook** (summary, campaigns, ad sets, build sheet, checks), the hand-off pack (one self-contained HTML file), the CSV build sheet or Markdown, for all networks or one network's canvas, or have Claude publish the pack as a private claude.ai link (`/paid-media-planner:share`). |
+| **Share** | Download a **slide-deck PDF** for sign-off (cover, brief and funnel budget, structure, each campaign and ad set, every ad as a native mockup, open questions, build steps), an **Excel workbook** (summary, campaigns, ad sets, build sheet, checks), the hand-off pack (one self-contained HTML file), the CSV build sheet, a **Google Ads Editor import** (a zip of CSVs for campaigns, locations, ad groups, keywords, negatives and responsive search ads, with the import steps) or Markdown, for all networks or one network's canvas, or have Claude publish the pack as a private claude.ai link (`/paid-media-planner:share`). |
 
 The instant checks flag missing pieces, text over each network's limit, leftover lorem ipsum, ad sets with the same
 targeting, budget spread too thin, and ads on a network their campaign doesn't run.
@@ -50,8 +50,9 @@ studio/          The browser app, plus modules shared with the server:
   mocks.mjs/.css   native ad mockups (one renderer for canvas, gallery and export)
   brief.mjs/.css   hand-off brief, CSV and Markdown
   app.js, canvas.css, index.html
-tools/canvas.mjs         local server (127.0.0.1:4720) and CLI: list, new, path, validate, layout, export (HTML, PDF, xlsx, CSV, MD), name, attach, context
-tools/xlsx.mjs           dependency-free .xlsx writer for the workbook export
+tools/canvas.mjs         local server (127.0.0.1:4720) and CLI: list, new, path, validate, layout, export (HTML, PDF, xlsx, CSV, MD, Google Ads Editor zip), name, attach, context
+tools/xlsx.mjs           dependency-free .xlsx and zip writer for the workbook and Google Ads Editor exports
+studio/gads.mjs          Google Ads Editor import files (CSV) from a plan's Google campaigns
 studio/slides.mjs/.css   the slide deck, printed to PDF
 tools/canvas-context.mjs UserPromptSubmit hook: hands a queued canvas request to Claude, once
 skills/paid-media-planner   how Claude builds, reviews and edits plans

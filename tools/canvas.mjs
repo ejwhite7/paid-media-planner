@@ -19,7 +19,8 @@ import { fileURLToPath } from "node:url";
 import { applyNaming, budgetSummary, layoutPlan, newPlan, normalize, lint, nodeById, viewPlan, TYPES, PLATFORMS } from "../studio/model.mjs";
 import { renderBrief, renderCsv, renderMarkdown, workbookSheets } from "../studio/brief.mjs";
 import { FIT_SCRIPT, renderSlides } from "../studio/slides.mjs";
-import { workbook } from "./xlsx.mjs";
+import { workbook, zip } from "./xlsx.mjs";
+import { googleAdsEditorFiles } from "../studio/gads.mjs";
 import { formatLabel } from "../studio/mocks.mjs";
 
 const tools = dirname(fileURLToPath(import.meta.url));
@@ -300,6 +301,8 @@ const cli = {
 		const out = resolve(flag("--out", join(home, "exports", plan.id)));
 		mkdirSync(out, { recursive: true });
 		const files = { "plan.html": exportHtml(plan), "build-sheet.csv": renderCsv(plan), "plan.md": renderMarkdown(plan), "plan.xlsx": workbook(workbookSheets(plan)), "slides.html": exportSlides(plan) };
+		const g = googleAdsEditorFiles(plan);
+		if (g.counts.campaigns) files["google-ads-editor.zip"] = zip(g.files);
 		let pdfNote = null;
 		try {
 			files["slides.pdf"] = await slidesPdf(plan);
@@ -408,6 +411,11 @@ export function serve(listenPort = port) {
 			if (route === "GET /api/plans/:id/slides.pdf") return send(res, 200, await slidesPdf(scoped()), { "content-type": "application/pdf", "content-disposition": `attachment; filename="${stem()}-slides.pdf"` });
 			if (route === "GET /api/plans/:id/export.html") return send(res, 200, exportHtml(scoped()), { "content-type": "text/html; charset=utf-8", ...(url.searchParams.has("download") ? { "content-disposition": `attachment; filename="${id}.html"` } : {}) });
 			if (route === "GET /api/plans/:id/export.csv") return send(res, 200, renderCsv(scoped()), { "content-type": "text/csv; charset=utf-8", "content-disposition": `attachment; filename="${id}-build-sheet.csv"` });
+			if (route === "GET /api/plans/:id/google-ads-editor.zip") {
+				const g = googleAdsEditorFiles(scoped());
+				if (!g.counts.campaigns) throw fail(404, "This plan has no Google Ads campaigns.");
+				return send(res, 200, zip(g.files), { "content-type": "application/zip", "content-disposition": `attachment; filename="${stem()}-google-ads-editor.zip"` });
+			}
 			if (route === "GET /api/plans/:id/export.md") return send(res, 200, renderMarkdown(scoped()), { "content-type": "text/markdown; charset=utf-8" });
 
 			if (route === "GET /api/request") return send(res, 200, readJson(reqPath));

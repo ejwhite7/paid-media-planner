@@ -261,7 +261,7 @@ export function normalize(input) {
 			data.cards = Array.isArray(data.cards) ? data.cards : [];
 			data.extraPrimaryTexts = arr(data.extraPrimaryTexts).slice(0, 4);
 			data.extraHeadlines = arr(data.extraHeadlines).slice(0, 13);
-			data.extraDescriptions = arr(data.extraDescriptions).slice(0, 2);
+			data.extraDescriptions = arr(data.extraDescriptions).slice(0, 4);
 			if (n.data?.creative === undefined) data.creative = /\b(ugc|creator|influencer)\b/i.test(`${data.name} ${data.notes}`) ? "ugc" : "produced";
 			if (!["produced", "ugc"].includes(data.creative)) data.creative = "produced";
 		}
@@ -452,6 +452,7 @@ export function lint(plan) {
 					if (descs.length < 2) add(n.id, "warn", `Responsive search ads need at least 2 descriptions (up to 4); this has ${descs.length}.`);
 					for (const h of d.extraHeadlines) if (str(h).length > 30) add(n.id, "warn", `Headline "${h.slice(0, 20)}…" is over 30 characters.`);
 					for (const h of d.extraDescriptions) if (str(h).length > 90) add(n.id, "warn", `A description is over 90 characters.`);
+					if (descs.length > 4) add(n.id, "warn", `Responsive search ads take up to 4 descriptions; this has ${descs.length}.`);
 				}
 				if (p.options && d.format !== "search") {
 					const extra = { primaryText: d.extraPrimaryTexts, headline: d.extraHeadlines, description: d.extraDescriptions };

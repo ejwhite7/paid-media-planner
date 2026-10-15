@@ -527,6 +527,14 @@ function optionFields(d, P, field, extra, control) {
 	for (let i = 0; i < P.options[field] - 1; i++) h += f(`${label} ${i + 2}`, control(`data.${extra}.${i}`, list[i] ?? ""), cnt(list[i] ?? "", max));
 	return h;
 }
+// Responsive search ad assets past the first ones: numbered fields up to Google's 15 headlines and 4 descriptions.
+function searchOptions(d, field, extra, from, to, max) {
+	const list = d[extra] ?? [];
+	const label = FIELD_LABEL[field];
+	let h = "";
+	for (let i = 0; i <= to - from; i++) h += f(`${label} ${from + i}`, field === "description" ? area(`data.${extra}.${i}`, list[i] ?? "", 2) : inp(`data.${extra}.${i}`, list[i] ?? ""), cnt(list[i] ?? "", max));
+	return h;
+}
 function campaignForm(n) {
 	const d = n.data;
 	const net = d.platforms[0] ?? "meta";
@@ -599,9 +607,9 @@ function adForm(n) {
 	${P.options && !search ? optionFields(d, P, "primaryText", "extraPrimaryTexts", (b, v) => area(b, v, 3)) : search ? "" : f("Primary text", area("data.primaryText", d.primaryText, 4), cnt(d.primaryText, L.primaryText))}
 	${P.options && !search ? optionFields(d, P, "headline", "extraHeadlines", inp) : f(search ? "Headline 1" : "Headline", inp("data.headline", d.headline), cnt(d.headline, L.headline))}
 	${search ? f("Headline 2", inp("data.headline2", d.headline2), cnt(d.headline2, L.headline2)) : ""}
-	${search ? f("More headlines <small class=\"muted\">one per line, up to 13 more, 30 characters each</small>", `<textarea data-bind="data.extraHeadlines" data-kind="lines" rows="4">${esc(d.extraHeadlines.join("\n"))}</textarea>`) : ""}
+	${search ? searchOptions(d, "headline", "extraHeadlines", 3, 15, L.headline) : ""}
 	${P.options && !search ? optionFields(d, P, "description", "extraDescriptions", inp) : f(search ? "Description 1" : "Description", area("data.description", d.description, 2), cnt(d.description, L.description))}
-	${search ? f("More descriptions <small class=\"muted\">one per line, up to 3 more, 90 characters each</small>", `<textarea data-bind="data.extraDescriptions" data-kind="lines" rows="3">${esc(d.extraDescriptions.join("\n"))}</textarea>`) : ""}
+	${search ? searchOptions(d, "description", "extraDescriptions", 2, 4, L.description) : ""}
 	${search ? `<div class="row2">${f("Path 1", inp("data.path1", d.path1, 'maxlength="15"'), cnt(d.path1, 15))}${f("Path 2", inp("data.path2", d.path2, 'maxlength="15"'), cnt(d.path2, 15))}</div>` : ""}
 	<div class="row2">${search ? "" : f("Call to action", sel("data.cta", [...P.ctas, ...(P.ctas.includes(d.cta) ? [] : [d.cta])].map((c) => [c, P.ctas.includes(c) ? c : `${c} (not offered)`]), d.cta))}${f("Display URL", inp("data.displayUrl", d.displayUrl))}</div>
 	${f("Landing page URL", inp("data.url", d.url, 'type="url"'))}
@@ -1255,6 +1263,7 @@ function openShare() {
 			<div><b>Excel workbook</b><span class="muted small">Summary and budget, campaigns, ad sets, the build sheet (one row per ad) and open checks, one tab each.</span><a data-href="export.xlsx">Download .xlsx</a></div>
 			<div><b>Hand-off pack</b><span class="muted small">One HTML file with review and build checklist: open, email, or drop in a drive.</span><a data-href="export.html" target="_blank">Preview</a><a data-href="export.html" data-q="download">Download</a></div>
 			<div><b>Build sheet</b><span class="muted small">CSV, one row per ad, for the person building it.</span><a data-href="export.csv">Download CSV</a></div>
+			${nets.includes("google") ? `<div data-gads${net && net !== "google" ? " hidden" : ""}><b>Google Ads Editor</b><span class="muted small">A zip of import files for Google Ads Editor: campaigns, locations, ad groups, keywords, negatives and responsive search ads, plus the import steps. Campaigns import paused.</span><a data-href="google-ads-editor.zip">Download .zip</a></div>` : ""}
 			<div><b>Brief as Markdown</b><span class="muted small">For Slack, email or a doc.</span><button type="button" data-copy-md>Copy</button></div>
 			${WEB ? `<div><b>Portal link</b><span class="muted small">Opens this plan in the client portal, for staff and for the clients assigned to its project.</span><button type="button" data-copy-link="client">Copy client link</button><button type="button" data-copy-link="staff">Copy staff link</button></div>` : `<div><b>Private link</b><span class="muted small">Claude publishes the pack to claude.ai and gives you a link to send.</span><button type="button" data-ask="share">Ask Claude</button></div>`}
 		</div>
@@ -1263,7 +1272,12 @@ function openShare() {
 	const links = () => $$("[data-href]", d).forEach((a) => (a.href = `/api/plans/${id}/${a.dataset.href}${q(a.dataset.q ?? "")}`));
 	links();
 	d.showModal();
-	$("#shareNet", d)?.addEventListener("change", (e) => ((net = e.target.value), links()));
+	$("#shareNet", d)?.addEventListener("change", (e) => {
+		net = e.target.value;
+		links();
+		const g = $("[data-gads]", d);
+		if (g) g.hidden = Boolean(net) && net !== "google";
+	});
 	$("#meName", d)?.addEventListener("input", (e) => store.set("cc-name", e.target.value.trim()));
 	for (const b of $$("[data-copy-link]", d))
 		b.onclick = () => {
