@@ -21,6 +21,7 @@ import { renderBrief, renderCsv, renderMarkdown, workbookSheets } from "../studi
 import { FIT_SCRIPT, renderSlides } from "../studio/slides.mjs";
 import { workbook, zip } from "./xlsx.mjs";
 import { googleAdsEditorFiles } from "../studio/gads.mjs";
+import { canvasImages } from "../studio/images.mjs";
 import { formatLabel } from "../studio/mocks.mjs";
 
 const tools = dirname(fileURLToPath(import.meta.url));
@@ -151,6 +152,11 @@ for (const box of document.querySelectorAll("[data-check]")) {
 
 // The slide deck as one self-contained page: fonts, styles and creative inlined, so it prints the same anywhere.
 const FONTS = [["Manrope", 400, "manrope-400"], ["Manrope", 600, "manrope-600"], ["Manrope", 700, "manrope-700"], ["DM Mono", 400, "dm-mono-400"], ["DM Mono", 500, "dm-mono-500"]];
+// The canvas images as standalone SVG (fonts and creative embedded). The Share dialog makes the PNGs in the browser.
+function canvasImageSvgs(plan) {
+	const fontCss = [["Manrope", 400, "manrope-400"], ["Manrope", 500, "manrope-500"], ["Manrope", 700, "manrope-700"], ["DM Mono", 400, "dm-mono-400"], ["DM Mono", 500, "dm-mono-500"]].map(([family, weight, file]) => `@font-face{font-family:"${family}";font-weight:${weight};src:url(data:font/ttf;base64,${readFileSync(join(studio, "fonts", `${file}.ttf`)).toString("base64")}) format("truetype")}`).join("");
+	return canvasImages(inlineAssets(plan), { fontCss, media: (src) => (src?.startsWith("data:image/") ? src : null) }).map((i) => ({ name: i.name, data: i.svg }));
+}
 function exportSlides(plan, { print = false } = {}) {
 	const p = inlineAssets(plan);
 	const fonts = FONTS.map(([family, weight, file]) => `@font-face{font-family:"${family}";font-weight:${weight};src:url(data:font/ttf;base64,${readFileSync(join(studio, "fonts", `${file}.ttf`)).toString("base64")}) format("truetype")}`).join("\n");
@@ -303,6 +309,7 @@ const cli = {
 		const files = { "plan.html": exportHtml(plan), "build-sheet.csv": renderCsv(plan), "plan.md": renderMarkdown(plan), "plan.xlsx": workbook(workbookSheets(plan)), "slides.html": exportSlides(plan) };
 		const g = googleAdsEditorFiles(plan);
 		if (g.counts.campaigns) files["google-ads-editor.zip"] = zip(g.files);
+		files["canvas-images.zip"] = zip(canvasImageSvgs(plan));
 		let pdfNote = null;
 		try {
 			files["slides.pdf"] = await slidesPdf(plan);

@@ -14,7 +14,8 @@ Share a paid media planner plan.
    structure, budget, targeting and every ad as a mockup; printed with a local Chrome-family browser, and skipped with a
    note if there isn't one: offer to run `npx -y playwright@1.56.1 install chromium-headless-shell` and export again, or print
    `slides.html` to PDF from any browser), `plan.xlsx`, `build-sheet.csv`,
-   `plan.md`, and `google-ads-editor.zip` when the plan has Google campaigns (import files for Google Ads Editor). Add `--net <network>` when the user wants one network's canvas only.
+   `plan.md`, `canvas-images.zip` (SVG images of the whole canvas, each network and each campaign; the Share dialog makes PNGs),
+   and `google-ads-editor.zip` when the plan has Google campaigns (import files for Google Ads Editor). Add `--net <network>` when the user wants one network's canvas only.
 4. Read `plan.html`, then publish it as a private claude.ai Artifact (load the artifact-design skill first; keep the page
    as exported apart from what that skill requires). Give the user the link and say that it's private until they share it.
 5. Mention the PDF, Excel, CSV, Markdown and Google Ads Editor paths for whoever builds the campaigns, and that the build checklist in the page keeps

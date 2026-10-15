@@ -2,11 +2,12 @@
 // save, redraw). The server file is the source of truth: when its version changes underneath (Claude edited it), the
 // canvas adopts it. Node graph: campaign → ad set → ad, parent links drawn as edges from out-ports to in-ports.
 import { PLATFORMS, OBJECTIVES, TYPES, STATUSES, STATUS_LABEL, FIELD_LABEL, newNode, nodeById, childrenOf, campaignOf, subtree, issuesByNode, adsetSummary, money, layoutPlan, firstFormat, uid } from "./model.mjs";
-import { inView, planNetworks } from "./model.mjs";
+import { inView, planNetworks, viewPlan } from "./model.mjs";
 import { FUNNEL, FUNNEL_LABEL, NAME_TOKENS, applyNaming, budgetPlan, conventionName, labelOf, normalize } from "./model.mjs";
 import { CATALOG, MEDIA_TYPES, mediaType, mediaLabel, autoPlaced, adFormatLabel, bidLevel, bidStrategies, budgetLevels, channelPlans, defaultNative, derivedBudget, goalLabel, goalsFor, googleTypes, nativeObjective, objectiveLabel, options } from "./model.mjs";
 import { renderMock, esc, formatLabel } from "./mocks.mjs";
 import { renderBrief, dismissId } from "./brief.mjs";
+import { canvasImages, zipStore } from "./images.mjs";
 
 const $ = (s, r = document) => r.querySelector(s);
 const $$ = (s, r = document) => [...r.querySelectorAll(s)];
@@ -1263,7 +1264,8 @@ function openShare() {
 			<div><b>Excel workbook</b><span class="muted small">Summary and budget, campaigns, ad sets, the build sheet (one row per ad) and open checks, one tab each.</span><a data-href="export.xlsx">Download .xlsx</a></div>
 			<div><b>Hand-off pack</b><span class="muted small">One HTML file with review and build checklist: open, email, or drop in a drive.</span><a data-href="export.html" target="_blank">Preview</a><a data-href="export.html" data-q="download">Download</a></div>
 			<div><b>Build sheet</b><span class="muted small">CSV, one row per ad, for the person building it.</span><a data-href="export.csv">Download CSV</a></div>
-			${nets.includes("google") ? `<div data-gads${net && net !== "google" ? " hidden" : ""}><b>Google Ads Editor</b><span class="muted small">A zip of import files for Google Ads Editor: campaigns, locations, ad groups, keywords, negatives and responsive search ads, plus the import steps. Campaigns import paused.</span><a data-href="google-ads-editor.zip">Download .zip</a></div>` : ""}
+			<div><b>Canvas images</b><span class="muted small">PNGs of the whole canvas, each network's canvas and each campaign on its own, for decks and docs.</span><button type="button" data-images>Download .zip</button></div>
+			<div data-gads><b>Google Ads Editor</b><span class="muted small" data-gads-note></span><a data-href="google-ads-editor.zip" data-gads-dl>Download .zip</a><button type="button" disabled data-gads-off>Download .zip</button></div>
 			<div><b>Brief as Markdown</b><span class="muted small">For Slack, email or a doc.</span><button type="button" data-copy-md>Copy</button></div>
 			${WEB ? `<div><b>Portal link</b><span class="muted small">Opens this plan in the client portal, for staff and for the clients assigned to its project.</span><button type="button" data-copy-link="client">Copy client link</button><button type="button" data-copy-link="staff">Copy staff link</button></div>` : `<div><b>Private link</b><span class="muted small">Claude publishes the pack to claude.ai and gives you a link to send.</span><button type="button" data-ask="share">Ask Claude</button></div>`}
 		</div>
@@ -1271,12 +1273,23 @@ function openShare() {
 		<div class="btn-row end"><button value="close">Done</button></div></form>`;
 	const links = () => $$("[data-href]", d).forEach((a) => (a.href = `/api/plans/${id}/${a.dataset.href}${q(a.dataset.q ?? "")}`));
 	links();
+	// Google Ads Editor: always listed, so it's findable; it explains what it needs when the plan or view has no Google campaigns.
+	const gads = () => {
+		const ok = nets.includes("google") && (!net || net === "google");
+		$("[data-gads-note]", d).textContent = ok
+			? "A zip of import files for Google Ads Editor: campaigns, locations, ad groups, keywords, negatives and responsive search ads, plus the import steps. Campaigns import paused."
+			: nets.includes("google")
+				? "Import files for Google Ads Editor. Choose All networks or the Google Ads canvas above to export them."
+				: "Import files for Google Ads Editor. Add a Google Ads campaign to this plan to export them.";
+		$("[data-gads-dl]", d).hidden = !ok;
+		$("[data-gads-off]", d).hidden = ok;
+	};
+	gads();
 	d.showModal();
 	$("#shareNet", d)?.addEventListener("change", (e) => {
 		net = e.target.value;
 		links();
-		const g = $("[data-gads]", d);
-		if (g) g.hidden = Boolean(net) && net !== "google";
+		gads();
 	});
 	$("#meName", d)?.addEventListener("input", (e) => store.set("cc-name", e.target.value.trim()));
 	for (const b of $$("[data-copy-link]", d))
@@ -1284,6 +1297,19 @@ function openShare() {
 			const url = `${ENV.portalOrigin}${b.dataset.copyLink === "client" ? "/portal/campaign-planner" : "/dashboard/campaign-planner"}?plan=${encodeURIComponent(id)}`;
 			navigator.clipboard.writeText(url).then(() => toast("Link copied."), () => toast(url));
 		};
+	$("[data-images]", d).onclick = async (e) => {
+		const btn = e.currentTarget;
+		btn.disabled = true;
+		btn.textContent = "Drawing…";
+		try {
+			await downloadCanvasImages(net);
+		} catch (err) {
+			toast(`Couldn't make the images: ${err.message}`);
+		} finally {
+			btn.disabled = false;
+			btn.textContent = "Download .zip";
+		}
+	};
 	$("[data-copy-md]", d).onclick = async () => {
 		const md = (await api(`/api/plans/${id}/export.md${q()}`)).body;
 		await navigator.clipboard.writeText(md).then(() => toast("Brief copied as Markdown."), () => toast("Couldn't reach the clipboard."));
@@ -1448,6 +1474,42 @@ async function importPlanFile() {
 	S.sel = null;
 	$("#settingsDlg").close();
 	toast(`Imported “${clean.name}”.${dropped ? ` ${dropped} creative file${dropped === 1 ? "" : "s"} from another planner couldn't come along: upload ${dropped === 1 ? "it" : "them"} again.` : ""}${clean.settings.context.length ? " Add its positioning files in Settings." : ""}`);
+}
+// Canvas images: images.mjs draws each view as SVG with the page's fonts and the plan's creative embedded, and the
+// browser rasterises them to PNG (2x, capped so huge canvases still fit a canvas element) and zips them.
+const asDataUrl = (blob) => new Promise((ok, no) => Object.assign(new FileReader(), { onload: (e) => ok(e.target.result), onerror: no }).readAsDataURL(blob));
+async function downloadCanvasImages(net = "") {
+	const FONTS = [["Manrope", 400, "manrope-400"], ["Manrope", 500, "manrope-500"], ["Manrope", 700, "manrope-700"], ["DM Mono", 400, "dm-mono-400"], ["DM Mono", 500, "dm-mono-500"]];
+	const fontCss = (await Promise.all(FONTS.map(async ([fam, w, f]) => `@font-face{font-family:"${fam}";font-weight:${w};src:url(${await asDataUrl(await (await fetch(`fonts/${f}.ttf`)).blob())}) format("truetype")}`))).join("");
+	await Promise.all(FONTS.map(([fam, w]) => document.fonts.load(`${w} 12px "${fam}"`)));
+	const ctx = document.createElement("canvas").getContext("2d");
+	const measure = (t, size, weight = 400, mono = false) => ((ctx.font = `${weight} ${size}px ${mono ? '"DM Mono"' : "Manrope"}`), ctx.measureText(String(t)).width);
+	const plan = net ? viewPlan(S.plan, net) : S.plan;
+	const media = new Map();
+	for (const n of plan.nodes)
+		for (const m of n.type === "ad" ? [...n.data.media, ...n.data.cards] : [])
+			if (m?.src && m.kind !== "video" && !media.has(m.src)) media.set(m.src, await fetch(m.src).then((r) => (r.ok ? r.blob() : null)).then((b) => (b ? asDataUrl(b) : null)).catch(() => null));
+	const files = [];
+	for (const img of canvasImages(plan, { measure, fontCss, media: (src) => media.get(src) ?? null })) {
+		const url = URL.createObjectURL(new Blob([img.svg], { type: "image/svg+xml" }));
+		try {
+			const el = await new Promise((ok, no) => Object.assign(new Image(), { onload: (e) => ok(e.target), onerror: () => no(new Error(`couldn't draw ${img.name}`)), src: url }));
+			const scale = Math.min(2, 16000 / Math.max(img.width, img.height), Math.sqrt(120e6 / (img.width * img.height)));
+			const c = Object.assign(document.createElement("canvas"), { width: Math.round(img.width * scale), height: Math.round(img.height * scale) });
+			const g = c.getContext("2d");
+			g.scale(scale, scale);
+			g.drawImage(el, 0, 0, img.width, img.height);
+			const png = await new Promise((ok) => c.toBlob(ok, "image/png"));
+			files.push({ name: img.name.replace(/\.svg$/, ".png"), data: new Uint8Array(await png.arrayBuffer()) });
+		} finally {
+			URL.revokeObjectURL(url);
+		}
+	}
+	const stem = `${S.plan.name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || "plan"}${net ? `-${net}` : ""}`;
+	const href = URL.createObjectURL(new Blob([zipStore(files)], { type: "application/zip" }));
+	Object.assign(document.createElement("a"), { href, download: `${stem}-canvas-images.zip` }).click();
+	setTimeout(() => URL.revokeObjectURL(href), 60e3);
+	toast(`${files.length} image${files.length === 1 ? "" : "s"} saved.`);
 }
 // In the portal, files come from the API with the session token, so links become fetched blobs.
 async function openAuthed(url, newTab = false, filename = "") {
