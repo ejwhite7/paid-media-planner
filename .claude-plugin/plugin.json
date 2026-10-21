@@ -1,13 +1,16 @@
 {
 	"name": "paid-media-planner",
 	"displayName": "Paid Media Campaign Planner by GrowthCast",
-	"version": "1.8.2",
+	"version": "1.8.3",
 	"description": "Plan paid media campaigns on a node canvas (campaign → ad set → ad) across Meta, Google, TikTok, LinkedIn, Reddit, X, Pinterest and Snapchat. Mock every ad in its network's native format, get Claude's review, and hand off a brief, build sheet and checklist for sign-off and execution.",
 	"author": {
 		"name": "GrowthCast",
 		"url": "https://growthcast.app"
 	},
 	"homepage": "https://growthcast.app",
+	"supportUrl": "https://growthcast.app/support",
+	"privacyPolicyUrl": "https://growthcast.app/privacy",
+	"termsOfServiceUrl": "https://growthcast.app/terms",
 	"license": "MIT",
 	"keywords": [
 		"marketing",
