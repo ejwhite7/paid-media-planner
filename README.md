@@ -13,13 +13,14 @@ clients review, comment and approve them. Both run the same canvas code from thi
 ## Install
 
 ```text
-/plugin install paid-media-planner --marketplace ejwhite7/paid-media-planner
+/plugin marketplace add ejwhite7/growthcast-plugins
+/plugin install paid-media-planner@growthcast
 ```
 
 or, from your shell:
 
 ```bash
-claude plugin marketplace add ejwhite7/paid-media-planner
+claude plugin marketplace add ejwhite7/growthcast-plugins
 claude plugin install paid-media-planner@growthcast
 ```
 
