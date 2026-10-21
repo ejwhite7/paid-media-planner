@@ -1391,7 +1391,7 @@ async function renderConnect() {
 		return;
 	}
 	if (!st.configured) {
-		out.innerHTML = `<p class="small">${WEB ? "Ad-account import isn't set up for this portal yet: an admin adds the COMPOSIO_API_KEY setting to the planner." : "Set <code>COMPOSIO_API_KEY</code> in your environment (from platform.composio.dev → API keys) and restart the planner to connect ad accounts."}</p>`;
+		out.innerHTML = `<p class="small">${WEB ? "Ad-account import isn't set up for this portal yet: an admin adds the COMPOSIO_API_KEY setting to the planner." : "Add your Composio API key (platform.composio.dev → API keys) to the plugin: run <code>/plugin</code> in Claude Code, pick paid-media-planner and configure <b>Composio API key</b>. Then send any message in Claude Code and reopen this panel."}</p>`;
 		return;
 	}
 	out.innerHTML = `<table class="stages conn"><tbody>${st.networks

@@ -114,11 +114,9 @@ test("connect: TikTok maps ENABLE/DISABLE and imports only enabled items", async
 
 test("connect: every network has a toolkit; no key means not configured, not an error", async () => {
 	for (const k of connectable()) assert.ok(CONNECTORS[k].toolkit && CONNECTORS[k].read);
-	assert.throws(() => composio({}), /COMPOSIO_API_KEY/);
+	assert.throws(() => composio({}), /no Composio API key/);
 	const home = mkdtempSync(join(tmpdir(), "pmp-"));
 	setHome(home);
-	const saved = process.env.COMPOSIO_API_KEY;
-	delete process.env.COMPOSIO_API_KEY;
 	const server = serve(0);
 	await new Promise((ok) => server.once("listening", ok));
 	try {
@@ -130,7 +128,23 @@ test("connect: every network has a toolkit; no key means not configured, not an 
 		assert.equal(r.status, 501);
 	} finally {
 		server.close();
-		if (saved) process.env.COMPOSIO_API_KEY = saved;
+		rmSync(home, { recursive: true, force: true });
+	}
+});
+
+test("connect: the hook's key configures the canvas; a browser can't set it", async () => {
+	const home = mkdtempSync(join(tmpdir(), "pmp-"));
+	setHome(home);
+	const server = serve(0);
+	await new Promise((ok) => server.once("listening", ok));
+	try {
+		const base = `http://127.0.0.1:${server.address().port}`;
+		const post = (headers) => fetch(`${base}/api/connect/key`, { method: "POST", headers: { "content-type": "application/json", ...headers }, body: JSON.stringify({ key: "ck_test" }) });
+		assert.equal((await post({ origin: "https://example.com" })).status, 403);
+		assert.equal((await fetch(`${base}/api/connect`).then((r) => r.json())).configured, false);
+		assert.deepEqual(await (await post({})).json(), { configured: true });
+	} finally {
+		server.close();
 		rmSync(home, { recursive: true, force: true });
 	}
 });

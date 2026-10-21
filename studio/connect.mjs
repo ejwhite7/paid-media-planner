@@ -1,6 +1,6 @@
 // Ad accounts through Composio: connect a network's ad account, list its accounts, and read active campaigns, ad sets
 // and ads into planner nodes. Read-only: only list and search tools are called, never a create, update or delete.
-// The servers (tools/canvas.mjs, the hosted planner) call it with their own Composio API key; the browser only sees
+// The servers (tools/canvas.mjs with the plugin's composio_api_key setting, the hosted planner) call it with a Composio API key; the browser only sees
 // the results. Tool slugs and response shapes are Composio's (docs.composio.dev, toolkits metaads, googleads,
 // tiktok_ads, linkedin_ads, reddit_ads, pinterest_ads, snapchat). X has no Composio ads toolkit.
 import { CATALOG, PLATFORMS, defaultNative, newNode } from "./model.mjs";
@@ -10,7 +10,7 @@ const MAX_PAGES = 10;
 
 // ---------- the Composio REST client ----------
 export function composio({ apiKey, fetch: f = globalThis.fetch, base = API } = {}) {
-	if (!apiKey) throw Object.assign(new Error("Composio isn't set up: set COMPOSIO_API_KEY where the planner runs."), { status: 501 });
+	if (!apiKey) throw Object.assign(new Error("Composio isn't set up: the planner has no Composio API key."), { status: 501 });
 	const call = async (method, path, body) => {
 		const r = await f(`${base}${path}`, { method, headers: { "x-api-key": apiKey, "content-type": "application/json" }, body: body ? JSON.stringify(body) : undefined });
 		const j = await r.json().catch(() => ({}));

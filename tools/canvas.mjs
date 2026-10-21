@@ -32,7 +32,9 @@ const flag = (name, d) => (args.includes(name) ? args[args.indexOf(name) + 1] : 
 // Arguments that aren't a --flag or a flag's value: the subcommand and its operands.
 const positional = args.filter((a, i) => !a.startsWith("--") && !(args[i - 1]?.startsWith("--") && !["--open"].includes(args[i - 1])));
 let port = Number(flag("--port", 4720));
-let home, plansDir, assetsDir, contextDir, reqPath;
+let home, plansDir, assetsDir, contextDir, reqPath, serverPath;
+// The Composio API key, handed over by the plugin's hook from its composio_api_key setting. Kept in memory only.
+let composioKey = "";
 // Where plans, uploads and the queued request live. Tests point it at a temporary folder.
 export function setHome(dir) {
 	home = resolve(dir);
@@ -40,6 +42,7 @@ export function setHome(dir) {
 	assetsDir = join(home, "assets");
 	contextDir = join(home, "context");
 	reqPath = join(home, "request.json");
+	serverPath = join(home, "server.json");
 	mkdirSync(plansDir, { recursive: true });
 	mkdirSync(assetsDir, { recursive: true });
 }
@@ -380,9 +383,15 @@ export function serve(listenPort = port) {
 			if (req.method === "GET" && parts[0] === "assets") return file(res, assetFile(url.pathname) ?? "/nonexistent");
 			if (req.method === "GET" && parts[0] === "context") return file(res, contextFile(url.pathname) ?? "/nonexistent");
 
-			// Ad accounts through Composio (read-only import). The key stays in this process's environment.
+			// Ad accounts through Composio (read-only import). The key stays in this process's memory and is never sent back.
 			if (parts[0] === "api" && parts[1] === "connect") {
-				const key = process.env.COMPOSIO_API_KEY;
+				// Only the hook sets the key. Browsers always send Origin on a POST, so no page (ours included) can.
+				if (route === "POST /api/connect/key") {
+					if (req.headers.origin) throw fail(403, "The key comes from the plugin's composio_api_key setting.");
+					composioKey = String((await json(req)).key ?? "").trim();
+					return send(res, 200, { configured: Boolean(composioKey) });
+				}
+				const key = composioKey;
 				const net = parts[2];
 				if (route === "GET /api/connect" && !key) return send(res, 200, { configured: false, networks: connectable().map((n) => ({ net: n, name: PLATFORMS[n].name, connected: false })) });
 				const svc = adAccounts(composio({ apiKey: key, ...(process.env.COMPOSIO_BASE_URL ? { base: process.env.COMPOSIO_BASE_URL } : {}) }), process.env.COMPOSIO_USER_ID || "paid-media-planner");
@@ -465,6 +474,8 @@ export function serve(listenPort = port) {
 		})
 		.listen(port, "127.0.0.1", () => {
 			console.log(`Paid media planner at http://127.0.0.1:${port}  (plans in ${plansDir})`);
+			// Tells the hook which port to hand the Composio key to.
+			if (isMain) writeAtomic(serverPath, JSON.stringify({ port, pid: process.pid }));
 			if (args.includes("--open")) spawn("open", [`http://127.0.0.1:${port}`], { stdio: "ignore", detached: true }).unref();
 		});
 }
